@@ -1,21 +1,15 @@
 # Voir
 
-A web UI for [ACP](https://agentclientprotocol.com)-compatible
-coding agents. One Voir process, many worktrees, each with its
-own agent. Mobile-first, single screen — the chat.
+A chat interface for [ACP](https://agentclientprotocol.com)-compatible
+coding agents. One screen, one conversation per session, mobile-first.
 
-Voir is the shell, not the agent. It doesn't spawn, sandbox, or
-kill agents — it talks JSON-RPC 2.0 to one or more ACP endpoints
-that you (or your worktree manager, IDE plugin, sandbox wrapper)
-control. The reference launcher in `bin/acp-spawn.mjs` shows how
-thin that boundary can be.
+Voir does one thing: it talks JSON-RPC 2.0 to ACP agents and renders
+the chat. It does not spawn agents, it does not run agents, and it
+does not kill agents. That's the launcher's job.
 
-## Get started
+## Run it
 
-You need two things: a running Voir server, and an `acp-spawn`
-launcher running inside each worktree you want to chat with.
-
-### 1. Start Voir
+### 1. Start the server
 
 ```sh
 git clone <this-repo> voir
@@ -24,9 +18,10 @@ npm install
 npm run dev          # http://localhost:9000
 ```
 
-Open `http://localhost:9000` in your browser. You'll see an
-empty **Folders** list — that's expected; no worktrees are
-attached yet.
+Open `http://localhost:9000` in your browser. You'll see an empty
+**Folders** list — no worktrees are attached yet, that's expected.
+
+<img src="images/folder-overview.jpeg" width="360" alt="All folders connected to Voir" />
 
 For a production-style run:
 
@@ -35,261 +30,169 @@ npm run build
 npm start            # http://localhost:9000
 ```
 
-A [Dockerfile](./Dockerfile) and [docker-compose.yml](./docker-compose.yml)
-are included for the server. The launcher is a plain Node
-script — run it on the host, in the worktree, not in a
-container.
+### 2. Pick an ACP agent and add a chat
 
-### 2. Start a launcher in a worktree
+You need an ACP-compatible agent on your `PATH`. Pick one:
 
-In another terminal, `cd` into the worktree you want to chat
-with and run the launcher:
+- `opencode acp` — OpenCode
+- `pi-acp` — Pi
+- `claude-agent-acp` — Claude (via `@agentclientprotocol/claude-agent-acp`)
+- `codex-acp` — Codex (via `@zed-industries/codex-acp`)
+- `copilot-acp` — GitHub Copilot
+- anything else in the [ACP registry](https://agentclientprotocol.com/get-started/agents)
+
+Then `cd` into a worktree and start the launcher:
 
 ```sh
 cd ~/worktrees/feat-42
-/path/to/voir/bin/acp-spawn.mjs \
-  --agent pi-acp --name pi --ui http://localhost:9000
+node /path/to/voir/bin/acp-spawn.mjs \
+  --agent opencode acp \
+  --name opencode \
+  --ui http://localhost:9000
 ```
 
-The launcher spawns `pi-acp` in the current directory, exposes
-it on a local HTTP port, and registers the folder with Voir.
-You'll see something like:
+The launcher spawns the agent, picks a free port, starts a stdio→HTTP
+bridge, and registers the folder with Voir. You'll see something like:
 
 ```
-pi-acp bridge for /home/you/worktrees/feat-42 on http://127.0.0.1:43127/
-registered with Voir → browse: http://localhost:9000/f/home/you/worktrees/feat-42
+opencode acp bridge for /home/you/worktrees/feat-42 on http://127.0.0.1:43127/
+registered → browse: http://localhost:9000/f/home/you/worktrees/feat-42
 ```
 
-Open the `browse` URL (or just refresh `http://localhost:9000`)
-and the folder appears in the list.
+Open that URL (or just refresh `http://localhost:9000`) and the folder
+shows up. **+ New chat**, type, send. The agent streams its reply.
 
-### 3. Chat
+<img src="images/chatting.jpeg" width="360" alt="Overview of an active chat" />
 
-Tap **+ New chat** to start a conversation, or pick a previous
-session. Type, hit send, watch the agent stream its reply.
+A few things the chat can do, when the agent supports them:
 
-A few things to know:
+- **Slash commands** — type `/` in the composer; if the agent
+  advertises commands (e.g. `/compact`, `/init`), they appear in a
+  popover.
 
-- The **+N −M** pill on each folder row is a one-tap jump to
-  that worktree's diff.
-- The **Diff** tab in the chat (and on the session list) shows
-  the full per-file diff between the auto-detected base branch
-  and your worktree, including uncommitted changes.
-- The composer supports `/` slash commands if the agent
-  advertises them — type `/` to see the list.
-- The composer also accepts `@` file mentions; selecting one
-  attaches the file as a resource to your next message.
-- The chevron above the composer opens the model/mode drawer
-  for switching the active session's model and thinking level.
+  <img src="images/slash-commands.jpeg" width="360" alt="The slash-command popover with an example" />
 
-### 4. Tear down
+- **Switch model mid-session** — the chevron above the composer
+  opens a drawer listing the models the agent has advertised. Pick
+  one and the next turn uses it.
 
-`Ctrl-C` the launcher. The folder disappears from Voir, the
-`pi-acp` subprocess is killed, the bridge port is freed.
+  <img src="images/choose-model.jpeg" width="360" alt="Changing the active model from the drawer above the composer" />
 
-If you kill the launcher abruptly (e.g. `kill -9`), Voir's
-10-second heartbeat will notice the endpoint is gone and drop
-the folder on its own.
+- **@-file mentions** — type `@` to attach a file from the
+  worktree to your next message.
 
-### 5. Run more worktrees
+  <img src="images/at-files.jpeg" width="360" alt="@-mentioning a file from the worktree" />
 
-Just `cd` to another worktree and start another launcher. Each
-one gets its own port, its own `pi-acp`, and its own slot in
-Voir's folder list. They don't interfere with each other.
-
-## Run the launcher from anywhere
-
-The launcher is a single self-contained Node script. You can:
-
-- Run it directly: `/path/to/voir/bin/acp-spawn.mjs`
-- Symlink it: `ln -s /path/to/voir/bin/acp-spawn.mjs ~/.local/bin/acp-spawn`
-- Install Voir globally: `npm install -g .` from this
-  directory, then `acp-spawn --agent pi-acp --name pi --ui http://localhost:9000`
-  from anywhere.
-- Wrap it in your own launcher (IDE plugin, worktree manager,
-  …) that does `cd <worktree> && exec acp-spawn --agent … --name … --ui …`.
-
-### Flags
-
-`--agent`, `--name`, and `--ui` are required. The launcher
-doesn't default any of them — pick whichever agent, label, and
-UI URL fits your setup.
+Want it on `PATH`?
 
 ```sh
-acp-spawn --agent <cmd>     # required
-acp-spawn --name  <name>    # required
-acp-spawn --ui    <url>     # required
-acp-spawn --port  <n>       # default: pick a free port
-acp-spawn --no-register     # bridge only, don't call /api/folders
+# Either symlink it:
+ln -s /path/to/voir/bin/acp-spawn.mjs ~/.local/bin/acp-spawn
+
+# Or install Voir globally:
+npm install -g /path/to/voir
+acp-spawn --agent opencode acp --name opencode --ui http://localhost:9000
 ```
 
-The required flags also have env-var equivalents
-(`AGENT`, `NAME`, `UI`, `PORT`).
+### 3. Multiple sessions in one worktree
 
-### Wrap in a sandbox
+A folder can hold as many sessions as you want. Open the folder in
+Voir, hit **+ New chat** as many times as you like — each one is its
+own conversation thread with the same agent, sharing the same
+worktree. Switch between them from the folder view.
 
-`--agent` takes any shell command, so wrap your real agent in
-`fence` / `bwrap` / `firejail`:
+<img src="images/sessions-in-folder.jpeg" width="360" alt="The sessions in a folder" />
+
+If you want to compare two agents in the same worktree, run two
+launchers with different `--name`s and different `--port`s — each
+one becomes its own folder, with its own sessions.
+
+Each session can also open its worktree's **Diff** tab to see exactly
+what the agent changed since the worktree branched — every file,
+every hunk, plus uncommitted edits.
+
+<img src="images/diff-view.jpeg" width="360" alt="The diff view for a session" />
+
+### 4. Add more chats
+
+Every worktree is its own chat. Just `cd` somewhere else and start
+another launcher with a different `--name`. The folder list grows; the
+sessions don't share state.
 
 ```sh
-acp-spawn --agent 'fence exec --private . -- pi-acp'     --name pi --ui http://localhost:9000
-acp-spawn --agent 'bwrap --unshare-all --bind . . --tmpfs /tmp --dev --proc -- pi-acp' \
-  --name pi --ui http://localhost:9000
-acp-spawn --agent 'firejail --noprofile --private=. -- pi-acp' --name pi --ui http://localhost:9000
+cd ~/worktrees/other-thing
+acp-spawn --agent codex-acp --name codex --ui http://localhost:9000
 ```
 
-### Try a different agent
+### 5. Tear down
 
-`pi-acp` is one implementation; any ACP-compatible agent
-works:
+`Ctrl-C` the launcher. The folder disappears from Voir, the agent
+subprocess is killed, the bridge port is freed. If you `kill -9` the
+launcher, Voir's heartbeat will notice the endpoint is gone and drop
+the folder within ~10 seconds.
+
+## Sandbox the agent
+
+The launcher takes any command, so wrap the agent in whatever
+sandbox you trust before `--agent`:
 
 ```sh
-acp-spawn --agent 'other-acp-agent' --name other --ui http://localhost:9000
+acp-spawn --agent 'fence exec --private . -- opencode acp'    --name opencode --ui http://localhost:9000
+acp-spawn --agent 'bwrap --unshare-all --bind . . --tmpfs /tmp --dev --proc -- opencode acp' \
+          --name opencode --ui http://localhost:9000
+acp-spawn --agent 'firejail --noprofile --private=. -- opencode acp' --name opencode --ui http://localhost:9000
 ```
 
-Voir itself doesn't care which agent is behind the endpoint —
-it just speaks ACP JSON-RPC 2.0.
+Voir does not sandbox. That is the launcher's job, and the launcher's
+job is yours.
 
-## Manual control (no launcher)
+## Security: this is your job
 
-If you want to drive registration yourself, the API is:
+Voir is **not secured**. Out of the box it:
 
-```sh
-# Register a folder
-curl -X POST http://localhost:9000/api/folders \
-  -H "Content-Type: application/json" \
-  -d '{
-    "path":      "/home/you/worktrees/feat-42",
-    "agentUrl":  "http://127.0.0.1:8123/",
-    "agentName": "pi"
-  }'
-# → 201 { "path": "...", "browse": "/f/home/you/worktrees/feat-42" }
+- has **no authentication** on any endpoint,
+- binds the **dev server to `0.0.0.0`** (so `npm run dev` is reachable
+  on your LAN — fine in a container, not fine on a laptop),
+- will **fetch any `agentUrl`** it's told to via `POST /api/folders`,
+  which means an attacker who can reach the server can make it talk
+  to internal services on your network.
 
-# Inspect registered folders
-curl http://localhost:9000/api/folders
+If you intend to expose Voir beyond `127.0.0.1`, you must put
+something in front of it: a reverse proxy (Caddy, nginx, Traefik) with
+auth (OIDC, basic auth, mTLS, a Cloudflare Tunnel — whatever fits).
+Don't publish this to the internet as-is.
 
-# Tear down
-curl -X DELETE 'http://localhost:9000/api/folders?path=/home/you/worktrees/feat-42'
-```
+## What it is and isn't
 
-The `agentUrl` just has to speak ACP JSON-RPC 2.0 over HTTP.
-See [`docs/sandbox.md`](./docs/sandbox.md) for the wire
-contract.
+**It is:**
+- A chat. One screen, one conversation, mobile-first.
+- A worktree-diff view, because the most useful thing to look at after
+  an agent edits your code is what it changed.
+- An ACP client. It speaks JSON-RPC 2.0 to anything on the other end
+  of `--agent`.
 
-## Architecture
+**It isn't:**
+- A worktree manager. It does not know how to create worktrees.
+- An agent runner. `acp-spawn` runs the agent; Voir just talks to it.
+- A sandbox. Sandboxing is whatever you put in front of `--agent`.
+- A finished product. The mobile-friendly chat shell is the smallest
+  unit that's actually usable on a phone; everything else — multiple
+  parallel agents, complex tool approval flows, etc. — is something
+  you build on top of this.
 
-```
-┌─────────────────────────── Browser ───────────────────────────┐
-│  /                       list of folders                      │
-│  /f/<path>               sessions in a folder                  │
-│  /f/<path>?view=diff     full worktree diff                    │
-│  /f/<path>/s/<id>        chat                                  │
-│  /f/<path>/s/<id>?view=diff diff for the chat's folder         │
-│  /api/sessions/:id/stream   SSE: live chat updates             │
-│  /api/folder-files          file index for @-mentions          │
-│  /api/folder-diff           full diff payload                  │
-│  /api/sessions/:id/action   set_model / set_mode / cancel      │
-│  /api/sessions/:id/meta     ad-hoc session info lookup         │
-│  /api/folders               script-only folder registry        │
-└────────────────┬─────────────────────────────────────────────┘
-                 │
-┌────────────────▼─────────────────── Node ─────────────────────┐
-│  SessionManager (in-memory, per-process)                    │
-│   ├─ Folder "A"  ── AcpClient ──►  http://127.0.0.1:8123/    │
-│   │   └─ sessionId_1                                        │
-│   └─ Folder "B"  ── AcpClient ──►  http://127.0.0.1:8124/    │
-│       └─ sessionId_2                                         │
-└──────────────────────────────────────────────────────────────┘
-                 ▲                       ▲
-                 │ POST/DELETE            │ ACP JSON-RPC 2.0
-                 │ /api/folders           │ over HTTP
-        ┌────────┴────────┐               │
-        │  acp-spawn      │ ──────────────┘
-        │  (per worktree) │
-        └─────────────────┘
-```
-
-- A **folder** is one ACP agent connection.
-- A **session** is one conversation thread inside a folder.
-- The launcher owns the agent process and its lifecycle; Voir
-  just talks to the HTTP endpoint.
-
-## Layout
-
-```
-app/
-├─ root.tsx                          # html shell, error boundary
-├─ routes.ts                         # route table
-├─ app.css                           # tailwind + small CSS
-├─ lib/
-│  ├─ acp-client.server.ts           # transport-agnostic ACP client
-│  ├─ brand.ts                       # product name (single source of truth)
-│  ├─ chat-types.ts                  # shared message/folder types
-│  ├─ diff.server.ts                 # git diff: parse + summarise
-│  ├─ files.server.ts                # server-side file index for @-mentions
-│  ├─ format.ts                      # small formatting helpers
-│  ├─ hooks.ts                       # useAutoScroll, usePageVisible
-│  ├─ inline-diff.ts                 # LCS diff for tool-call previews
-│  ├─ route-parse.ts                 # /f/<path> URL → ChatRoute union
-│  ├─ sessions.server.ts             # folder/session manager
-│  └─ urls.ts                        # folderUrl / sessionUrl / streamUrl
-├─ routes/
-│  ├─ index.tsx                      # re-exports chat for the / route
-│  ├─ chat.tsx                       # /, /f/<path>, /f/<path>/s/<id>
-│  ├─ api.stream.tsx                 # SSE chat stream
-│  ├─ api.folders.tsx                # script-only folder registry
-│  ├─ api.folder-files.tsx           # file index for @-mentions
-│  ├─ api.folder-diff.tsx            # full worktree diff
-│  ├─ api.session-action.tsx         # set_model / set_mode / cancel
-│  └─ api.session-meta.tsx           # ad-hoc session info lookup
-└─ components/
-   ├─ Composer.tsx                   # message composer + /-@ popovers
-   ├─ DebugPopover.tsx               # "···" popover (shared)
-   ├─ DiffView.tsx                   # full worktree diff renderer
-   ├─ FolderTree.tsx                 # folder/session tree on /
-   ├─ Message.tsx                    # one chat message
-   ├─ ModelDrawer.tsx                # model/mode drawer
-   ├─ Picker.tsx                     # overlay folder/session picker
-   ├─ SessionDebugButton.tsx         # per-session "···" popover
-   └─ chat/
-      ├─ ChatApp.tsx                 # the route component (orchestrator)
-      ├─ ChatTabs.tsx                # Chat/Diff tab bar
-      ├─ ChatView.tsx                # messages, drawer, composer
-      └─ Header.tsx                  # page header (label + menu)
-
-bin/
-└─ acp-spawn.mjs                     # per-worktree launcher
-
-test/
-├─ acp-client.test.ts                # in-band vs SSE response race
-├─ diff.test.ts                      # parseNameStatus, parseUnifiedDiff
-├─ format.test.ts                    # shortPath
-├─ inline-diff.test.ts               # LCS-based line diff
-├─ route-parse.test.ts               # /f/<path> URL parser
-└─ urls.test.ts                      # folderUrl / sessionUrl / streamUrl
-
-docs/
-└─ sandbox.md                        # wire contract for ACP agents
-```
+This is the smallest unit that does mobile development. You write the
+tooling to set up ACP servers, connect them, and orchestrate them.
+Voir is the chat.
 
 ## Commands
 
-| Command           | What it does                                  |
-| ----------------- | --------------------------------------------- |
-| `npm run dev`     | Vite dev server with HMR on port 9000         |
-| `npm run build`   | Production build of the SSR bundle            |
-| `npm start`       | Serve the built bundle (defaults to port 9000)|
-| `npm test`        | Run unit tests (Node's built-in test runner)  |
-| `npm run typecheck` | Generate route types and run `tsc`          |
-
-## Stack
-
-- [React Router v7](https://reactrouter.com) framework mode
-  (SSR)
-- Vite + Tailwind v4
-- Server-sent events for streaming agent output
-- ACP JSON-RPC 2.0 over HTTP to talk to agents
-- Node 22 with the built-in test runner
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Vite dev server with HMR on port 9000 |
+| `npm run build` | Production build of the SSR bundle |
+| `npm start` | Serve the built bundle (defaults to port 9000) |
+| `npm test` | Run unit tests (Node's built-in test runner) |
+| `npm run typecheck` | Generate route types and run `tsc` |
 
 ## License
 

@@ -1,0 +1,44 @@
+# ──────────────────────────────────────────────────────────────────────
+# Voir — .dockerignore
+# Keep the build context small and avoid baking secrets into the image.
+# ──────────────────────────────────────────────────────────────────────
+
+# Local env / secrets — never bake into images
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Docs that don't need to ship in the image
+docs/
+README.md
+LICENSE*
+
+# Node / build artifacts we re-derive inside Docker
+node_modules
+build
+.react-router
+.cache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+
+# Docker self-references
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+.dockerignore

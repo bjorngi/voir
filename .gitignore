@@ -1,0 +1,10 @@
+node_modules
+.DS_Store
+# Local env files — never commit. .env.example is the template.
+.env
+.env.*
+!.env.example
+build
+.react-router
+.cache
+*.log

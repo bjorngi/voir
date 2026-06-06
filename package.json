@@ -1,0 +1,37 @@
+{
+  "name": "voir",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "acp-spawn": "./bin/acp-spawn.mjs"
+  },
+  "scripts": {
+    "build": "react-router build",
+    "dev": "react-router dev",
+    "start": "PORT=${PORT:-9000} react-router-serve ./build/server/index.js",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "typecheck": "react-router typegen && tsc"
+  },
+  "dependencies": {
+    "@react-router/node": "^7.6.0",
+    "@react-router/serve": "^7.6.0",
+    "isbot": "^5.1.17",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "react-router": "^7.6.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@react-router/dev": "^7.6.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0",
+    "vite-tsconfig-paths": "^5.1.0"
+  }
+}

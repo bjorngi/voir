@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+  --animate-border-slide: border-slide 1.6s ease-in-out infinite;
+}
+
+@keyframes border-slide {
+  0% {
+    background-position: -25% 0;
+  }
+  100% {
+    background-position: 125% 0;
+  }
+}
+
+/*
+ * The model/mode drawer animates between collapsed and
+ * expanded states using a CSS grid track trick. We render
+ * the panel inside a single-row grid: when closed, the
+ * track is `0fr` (zero height); when open, `1fr` (one
+ * fractional unit, which expands to fit the panel's natural
+ * height). The panel itself uses `min-height: 0` and
+ * `overflow: hidden` so the overflow clips during the
+ * animation. This is the only pure-CSS way to animate from
+ * a collapsed state to an intrinsic content height — `height:
+ * auto` is not animatable, and explicit pixel heights make
+ * the layout fragile when the contents change.
+ *
+ * The chevron button lives inside the same grid cell, at the
+ * top of the panel, so it animates in/out with the rest of
+ * the drawer rather than sitting as a separate affordance on
+ * the chat/composer divider.
+ */
+.drawer-grid {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.drawer-grid[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+.drawer-grid > .drawer-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/*
+ * Composer textarea auto-sizes to its content using
+ * `field-sizing: content` (Baseline 2024, all major browsers),
+ * with `min-height: 2lh` to keep it at least 2 lines tall and
+ * `max-height: 400px` to stop it from eating the viewport.
+ * `lh` resolves to the element's own computed line-height, so
+ * the 2-line floor tracks the font (e.g. `font-mono`).
+ */
+.composer-textarea {
+  field-sizing: content;
+  min-height: 2lh;
+  max-height: 400px;
+}
+
+/*
+ * Hide the textarea scrollbar in the composer. The textarea
+ * already auto-grows with the user's text and we cap it well
+ * above any reasonable one-shot message, so the scrollbar is
+ * only visible when the user is composing something very long.
+ * In that case the bar would just eat horizontal space and
+ * make the layout jitter; we hide it instead and let the
+ * user keep typing without an internal scrollbar.
+ */
+.scrollbar-hide {
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE/Edge legacy */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;                /* Chromium/Safari */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: #0b0d10;
+  color: #e6e8eb;
+}
+
+

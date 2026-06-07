@@ -1,37 +1,116 @@
 # ──────────────────────────────────────────────────────────────────────
-# Voir — docker compose
+# Voir — docker compose (development)
 #
 # Usage:
-#   cp .env.example .env   # edit if you want non-defaults
 #   docker compose up --build
-#   open http://localhost:${PORT:-10001}
+#   open http://localhost:9000
 #
-# Maps the container's port 9000 to ${PORT:-10001} on the host so
-# acp-spawn (running on the host) can register folders against it.
+# Three services:
+#   - web      the Voir dev server (vite + react-router), live reload
+#              on save via the bind-mounted source tree
+#   - mock-a   an ACP-compatible mock agent attached to ./dev-data/project-a
+#   - mock-b   an ACP-compatible mock agent attached to ./dev-data/project-b
 #
-# NOTE: this is fine if vous/mise both run on the same host, but
-# the ACP agent (which acp-spawn spawns on the host) needs to be
-# reachable from inside the container too — for that to work, the
-# container must use `network_mode: host` instead of the port map.
+# Both mocks register with Voir on startup; you'll see them appear in
+# the sidebar as two folders. Use this to exercise the multi-folder
+# UI (model drawer, file @-mentions, diff tab, etc.) without an API
+# key or a real agent binary.
+#
+# Tear down with `docker compose down` (add `-v` to wipe the node_modules
+# volume if you want a clean install).
 # ──────────────────────────────────────────────────────────────────────
 services:
-  voir:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: voir:latest
-    container_name: voir
-    restart: unless-stopped
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 9000"
     environment:
-      # Force these regardless of what's in .env.
-      NODE_ENV: production
+      NODE_ENV: development
     ports:
-      - "${PORT:-10001}:9000"
+      - "9000:9000"
+    volumes:
+      - .:/app
+      # Keep node_modules out of the bind mount so the host's
+      # platform-specific binaries don't shadow the container's.
+      - web_node_modules:/app/node_modules
+    # The mocks need to reach us by hostname; expose just makes
+    # the intent explicit (they also see us via DNS as "web").
+    expose:
+      - "9000"
+    # Wait until the dev server is actually serving traffic,
+    # not just until the container is up. We hit /api/folders
+    # (the same endpoint acp-spawn will POST to) so the
+    # healthcheck validates the exact code path that matters.
+    # start_period covers the first-run npm install + vite
+    # cold start, which can easily be 30–60s on a clean cache.
     healthcheck:
-      test:
-        - "CMD-SHELL"
-        - "node -e \"fetch('http://127.0.0.1:'+(process.env.PORT||9000)+'/api/folders').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))\""
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/api/folders >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 60s
+
+  mock-a:
+    image: node:22-alpine
+    # Each mock mounts its worktree at a distinct, stable path
+    # inside its own container. acp-spawn's $CWD becomes the path
+    # Voir sees, so distinct paths → distinct folder entries in
+    # the sidebar (Voir dedupes folders by the path the launcher
+    # registers).
+    working_dir: /project-a
+    command:
+      - node
+      - /voir-src/bin/acp-spawn.mjs
+      - --agent
+      - "node /voir-src/bin/mock-acp.mjs"
+      - --name
+      - mock-a
+      - --ui
+      - http://web:9000
+      - --port
+      - "9101"
+      # Listen on all interfaces so the UI (in a different
+      # container) can reach us, and tell the UI to call us by
+      # our compose service name rather than 127.0.0.1.
+      - --bind
+      - 0.0.0.0
+      - --url
+      - http://mock-a:9101/
+    volumes:
+      - .:/voir-src:ro
+      - ./dev-data/project-a:/project-a
+    ports:
+      - "9101:9101"
+    depends_on:
+      web:
+        condition: service_healthy
+
+  mock-b:
+    image: node:22-alpine
+    working_dir: /project-b
+    command:
+      - node
+      - /voir-src/bin/acp-spawn.mjs
+      - --agent
+      - "node /voir-src/bin/mock-acp.mjs"
+      - --name
+      - mock-b
+      - --ui
+      - http://web:9000
+      - --port
+      - "9102"
+      - --bind
+      - 0.0.0.0
+      - --url
+      - http://mock-b:9102/
+    volumes:
+      - .:/voir-src:ro
+      - ./dev-data/project-b:/project-b
+    ports:
+      - "9102:9102"
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  web_node_modules:

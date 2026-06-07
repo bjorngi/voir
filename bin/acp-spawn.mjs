@@ -34,6 +34,18 @@ function parseArgs(argv) {
     name: process.env.NAME ?? null,
     ui: process.env.UI ?? null,
     port: process.env.PORT ? Number(process.env.PORT) : null,
+    // The interface the bridge listens on. Default to loopback so
+    // the on-host case stays secure-by-default; containerized
+    // launchers pass --bind 0.0.0.0 (or the specific container IP)
+    // to be reachable from the UI in another network namespace.
+    bind: process.env.BIND ?? "127.0.0.1",
+    // The URL the bridge advertises to the UI. Defaults to
+    // http://<bind>:<port>/, which is correct when the UI and the
+    // launcher share a network namespace (the on-host case). In
+    // containerized setups the UI sees the agent under a different
+    // hostname (e.g. the compose service name), so the launcher
+    // should pass --url to override what gets registered.
+    url: process.env.URL ?? null,
     register: true,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -42,6 +54,8 @@ function parseArgs(argv) {
     else if (a === "--name") opts.name = argv[++i];
     else if (a === "--ui") opts.ui = argv[++i];
     else if (a === "--port") opts.port = Number(argv[++i]);
+    else if (a === "--bind") opts.bind = argv[++i];
+    else if (a === "--url") opts.url = argv[++i];
     else if (a === "--no-register") opts.register = false;
     else if (a === "-h" || a === "--help") {
       printHelp();
@@ -78,6 +92,14 @@ Options:
   --ui   <url>      UI / orchestrator base URL (required)
                     used to POST /api/folders and DELETE on shutdown
   --port <n>        local bridge port        [default: pick a free port]
+  --bind <addr>     interface the bridge listens on
+                                       [default: 127.0.0.1, use 0.0.0.0
+                                        in containers]
+  --url  <url>      URL the bridge advertises to the UI
+                                       [default: http://<bind>:<port>/,
+                                        override when the UI reaches the
+                                        agent under a different name
+                                        (e.g. a compose service name)]
   --no-register     don't talk to the UI (bridge only)
   -h, --help
 
@@ -86,6 +108,8 @@ Environment (used as fallback for the corresponding flag):
   NAME              same as --name
   UI                same as --ui
   PORT              same as --port
+  BIND              same as --bind
+  URL               same as --url
 `);
 }
 
@@ -107,7 +131,28 @@ async function findFreePort() {
 }
 
 const port = opts.port ?? (await findFreePort());
-const agentUrl = `http://127.0.0.1:${port}/`;
+// What the agentUrl looks like depends on whether the launcher and
+// the UI share a network namespace:
+//   - on-host: bind=127.0.0.1, no --url → agentUrl = http://127.0.0.1:<port>/
+//   - container: bind=0.0.0.0 + --url=http://<svc>:<port>/
+// Validate --url early so a typo doesn't surface as a 400 from
+// the UI on registration.
+let agentUrl;
+if (opts.url) {
+  try {
+    const u = new URL(opts.url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      throw new Error(`unsupported protocol: ${u.protocol}`);
+    }
+    agentUrl = u.toString();
+    if (!agentUrl.endsWith("/")) agentUrl += "/";
+  } catch (err) {
+    console.error(`invalid --url: ${opts.url} (${err.message})`);
+    process.exit(2);
+  }
+} else {
+  agentUrl = `http://${opts.bind}:${port}/`;
+}
 
 // -----------------------------------------------------------------------
 // Spawn the agent
@@ -238,7 +283,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(port, "127.0.0.1", async () => {
+server.listen(port, opts.bind, async () => {
   console.log(`${opts.agent} bridge for ${folder} on ${agentUrl}`);
 
   if (!opts.register) return;

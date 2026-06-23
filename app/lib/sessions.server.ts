@@ -3,6 +3,7 @@ import {
   HttpJsonRpcTransport,
   type SessionUpdate,
 } from "./acp-client.server";
+import { capture as captureTimeline } from "./timeline.server";
 import type {
   AvailableModel,
   AvailableMode,
@@ -425,6 +426,18 @@ class SessionManager {
           at: Date.now(),
         });
         this.broadcast(session, this.controlMessage({ type: "queueDepth", depth: 0 }));
+        // Capture the worktree state at the end of this turn.
+        // The snapshot is independent of the user's git history
+        // and gives the timeline a recoverable checkpoint.
+        const folder = this.folderForSession(session);
+        if (folder) {
+          void captureTimeline(folder.path, {
+            reason: "turn-end",
+            sessionId: session.id,
+            prompt: promptText(content),
+            plan: latestPlan(session),
+          });
+        }
       }
     }
   }
@@ -1070,6 +1083,23 @@ function defaultTitle(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `Session ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function promptText(content: ContentBlock[]): string {
+  return content
+    .map((c) => (c.type === "text" ? c.text ?? "" : c.name ? "@" + c.name : ""))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function latestPlan(session: SessionState): string[] {
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    const m = session.messages[i];
+    if (m.kind === "plan") {
+      return m.entries.map((e) => e.content);
+    }
+  }
+  return [];
 }
 
 declare global {

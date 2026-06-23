@@ -23,8 +23,9 @@ import { pathFromFolderParam } from "./urls";
 export type ChatRoute =
   | { k: "folders" }
   | { k: "sessions"; folder: string }
-  | { k: "chat"; folder: string; sessionId: string; diff: boolean }
-  | { k: "diff"; folder: string; sessionId: string | null };
+  | { k: "chat"; folder: string; sessionId: string; diff: boolean; timeline: boolean }
+  | { k: "diff"; folder: string; sessionId: string | null }
+  | { k: "timeline"; folder: string; sessionId: string | null };
 
 export function parseRoute(
   splat: string | undefined,
@@ -32,20 +33,21 @@ export function parseRoute(
 ): ChatRoute {
   if (!splat) return { k: "folders" };
   const wantDiff = view === "diff";
+  const wantTimeline = view === "timeline";
   const parts = splat.split("/");
   const sIdx = parts.indexOf("s");
   if (sIdx === -1) {
     const folder = pathFromFolderParam(splat);
-    return wantDiff
-      ? { k: "diff", folder, sessionId: null }
-      : { k: "sessions", folder };
+    if (wantDiff) return { k: "diff", folder, sessionId: null };
+    if (wantTimeline) return { k: "timeline", folder, sessionId: null };
+    return { k: "sessions", folder };
   }
   // The "s" segment must be the second-to-last: .../s/<id>.
   // Anything else is a malformed URL; treat as root.
   if (sIdx !== parts.length - 2) return { k: "folders" };
   const folder = pathFromFolderParam(parts.slice(0, sIdx).join("/"));
   const sessionId = parts[sIdx + 1];
-  return wantDiff
-    ? { k: "diff", folder, sessionId }
-    : { k: "chat", folder, sessionId, diff: false };
+  if (wantDiff) return { k: "diff", folder, sessionId };
+  if (wantTimeline) return { k: "timeline", folder, sessionId };
+  return { k: "chat", folder, sessionId, diff: false, timeline: false };
 }

@@ -17,13 +17,13 @@ export function ChatTabs({
 }: {
   folder: string;
   activeSessionId: string | null;
-  active: "chat" | "diff";
+  active: "chat" | "diff" | "timeline";
 }) {
-  // We preserve the session id in the diff URL when we have
-  // one, so a "Back" affordance (or the browser back button)
-  // can return the user to the chat they came from. When
-  // /d was opened from the session list, there's no session
-  // id and we drop them on the session list.
+  // We preserve the session id in the diff/timeline URL when we
+  // have one, so a "Back" affordance (or the browser back button)
+  // can return the user to the chat they came from. When the
+  // view was opened from the session list, there's no session id
+  // and we drop them on the session list.
   const base = activeSessionId
     ? sessionUrl(folder, activeSessionId)
     : folderUrl(folder);
@@ -37,6 +37,9 @@ export function ChatTabs({
       </TabLink>
       <TabLink href={`${base}?view=diff`} active={active === "diff"}>
         Diff
+      </TabLink>
+      <TabLink href={`${base}?view=timeline`} active={active === "timeline"}>
+        Timeline
       </TabLink>
     </nav>
   );

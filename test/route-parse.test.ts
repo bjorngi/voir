@@ -28,6 +28,23 @@ test("parseRoute: folder/s/<id> → chat for that session", () => {
     folder: "/home/me/proj",
     sessionId: "abc-123",
     diff: false,
+    timeline: false,
+  });
+});
+
+test("parseRoute: folder/s/<id>?view=timeline → timeline that preserves the session id", () => {
+  assert.deepEqual(parseRoute("home/me/proj/s/abc-123", "timeline"), {
+    k: "timeline",
+    folder: "/home/me/proj",
+    sessionId: "abc-123",
+  });
+});
+
+test("parseRoute: folder + ?view=timeline → timeline for that folder", () => {
+  assert.deepEqual(parseRoute("home/me/proj", "timeline"), {
+    k: "timeline",
+    folder: "/home/me/proj",
+    sessionId: null,
   });
 });
 

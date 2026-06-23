@@ -5,6 +5,8 @@ import {
   folderSummary,
 } from "~/lib/sessions.server";
 import { diffFiles, diffSummary, type DiffResult } from "~/lib/diff.server";
+import { list as listTimeline } from "~/lib/timeline.server";
+import type { SnapshotSummary } from "~/lib/timeline.server";
 import { sessionUrl } from "~/lib/urls";
 import { parseRoute } from "~/lib/route-parse";
 import type {
@@ -100,6 +102,19 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       folder,
       fromSessionId: p.sessionId,
       diff: result,
+    };
+  }
+
+  if (p.k === "timeline") {
+    // Per-folder snapshot history. fromSessionId lets the tab
+    // bar preserve the back-link to the chat the user came from.
+    const snapshots: SnapshotSummary[] = await listTimeline(p.folder);
+    return {
+      k: "timeline" as const,
+      folders,
+      folder,
+      fromSessionId: p.sessionId,
+      snapshots,
     };
   }
 

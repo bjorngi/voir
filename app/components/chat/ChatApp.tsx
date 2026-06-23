@@ -11,6 +11,7 @@ import { FolderTree } from "~/components/FolderTree";
 import { Picker } from "~/components/Picker";
 import { SessionDebugButton } from "~/components/SessionDebugButton";
 import { DiffView } from "~/components/DiffView";
+import { TimelineView } from "~/components/TimelineView";
 import { ChatView } from "./ChatView";
 import { ChatTabs } from "./ChatTabs";
 import { Header } from "./Header";
@@ -19,10 +20,10 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // The tab bar lives between the header and the body for
-  // chat and diff. Sessions-list and root views don't have
-  // one — a tab bar on the root would be misleading (the
-  // diff tab is per-folder).
-  const showTabs = data.k === "chat" || data.k === "diff";
+  // chat, diff, and timeline. Sessions-list and root views
+  // don't have one — a tab bar on the root would be misleading
+  // (those tabs are per-folder).
+  const showTabs = data.k === "chat" || data.k === "diff" || data.k === "timeline";
   const label =
     data.k === "folders"
       ? "Folders"
@@ -36,9 +37,15 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         <ChatTabs
           folder={data.folder.path}
           activeSessionId={
-            data.k === "chat" ? data.session.id : data.fromSessionId
+            data.k === "chat"
+              ? data.session.id
+              : data.k === "diff"
+                ? data.fromSessionId
+                : data.k === "timeline"
+                  ? data.fromSessionId
+                  : null
           }
-          active={data.k === "chat" ? "chat" : "diff"}
+          active={data.k === "chat" ? "chat" : data.k === "diff" ? "diff" : "timeline"}
         />
       )}
       <main className="relative min-h-0 flex-1">
@@ -51,6 +58,12 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         {data.k === "chat" && <ChatView data={data} />}
         {data.k === "diff" && (
           <DiffView folder={data.folder.path} initial={data.diff} />
+        )}
+        {data.k === "timeline" && (
+          <TimelineView
+            folder={data.folder.path}
+            snapshots={data.snapshots}
+          />
         )}
 
         {pickerOpen && (
@@ -73,12 +86,19 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
                         folder: data.folder,
                         activeSessionId: data.session.id,
                       }
-                    : {
-                        k: "diff",
-                        folders: data.folders,
-                        folder: data.folder,
-                        activeSessionId: data.fromSessionId,
-                      }
+                    : data.k === "diff"
+                      ? {
+                          k: "diff",
+                          folders: data.folders,
+                          folder: data.folder,
+                          activeSessionId: data.fromSessionId,
+                        }
+                      : {
+                          k: "timeline",
+                          folders: data.folders,
+                          folder: data.folder,
+                          activeSessionId: data.fromSessionId,
+                        }
             }
           />
         )}

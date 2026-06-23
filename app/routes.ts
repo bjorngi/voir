@@ -12,7 +12,9 @@ export default [
   route("api/folder-files", "routes/api.folder-files.tsx"),
   route("api/folder-diff", "routes/api.folder-diff.tsx"),
   route("api/folders", "routes/api.folders.tsx"),
-  route("api/timeline", "routes/api.timeline.tsx"),
-  route("api/timeline-diff", "routes/api.timeline-diff.tsx"),
   route("api/timeline-restore", "routes/api.timeline-restore.tsx"),
+  route("api/timeline-diff", "routes/api.timeline-diff.tsx"),
+  route("api/commit", "routes/api.commit.tsx"),
+  route("api/push", "routes/api.push.tsx"),
+  route("api/commits", "routes/api.commits.tsx"),
 ] satisfies RouteConfig;

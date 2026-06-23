@@ -31,13 +31,7 @@ export function Picker({
         activeSessionId: string;
       }
     | {
-        k: "diff";
-        folders: FolderSummary[];
-        folder: FolderSummary;
-        activeSessionId: string | null;
-      }
-    | {
-        k: "timeline";
+        k: "changes";
         folders: FolderSummary[];
         folder: FolderSummary;
         activeSessionId: string | null;
@@ -45,7 +39,7 @@ export function Picker({
   onClose: () => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(
-    data.k === "sessions" || data.k === "chat" || data.k === "diff"
+    data.k === "sessions" || data.k === "chat" || data.k === "changes"
       ? data.folder.path
       : null,
   );
@@ -53,13 +47,13 @@ export function Picker({
   const activeFolder =
     data.k === "folders" ? undefined : data.folder;
   const activeSessionId =
-    data.k === "chat" || data.k === "diff" || data.k === "timeline"
+    data.k === "chat" || data.k === "changes"
       ? data.activeSessionId
       : undefined;
   const sessions =
     data.k === "sessions"
       ? data.sessions
-      : data.k === "chat" || data.k === "diff" || data.k === "timeline"
+      : data.k === "chat" || data.k === "changes"
         ? data.folder.sessions
         : [];
 

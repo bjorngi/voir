@@ -1,29 +1,34 @@
 /**
- * The "Chat" / "Diff" tab bar between the header and the body.
- * Only shown on chat and diff views. Both tabs are full-width
+ * The "Chat" / "Changes" tab bar between the header and the body.
+ * Only shown on chat and changes views. Both tabs are full-width
  * on mobile so they're comfortable tap targets.
  *
- * The diff marker is `?view=diff` (a query param) rather than
- * a `/d` path segment so the URL doesn't collide with a folder
- * literally named `d`. See parseRoute() in ~/lib/route-parse
- * for the disambiguation rules.
+ * The changes marker is `?view=changes` (a query param) rather
+ * than a `/c` path segment so the URL doesn't collide with a
+ * folder literally named `c'.
  */
 import { folderUrl, sessionUrl } from "~/lib/urls";
+
+export interface ChangesBadge {
+  files: number;
+  additions: number;
+  deletions: number;
+}
 
 export function ChatTabs({
   folder,
   activeSessionId,
   active,
+  changesBadge,
 }: {
   folder: string;
   activeSessionId: string | null;
-  active: "chat" | "diff" | "timeline";
+  active: "chat" | "changes";
+  changesBadge?: ChangesBadge;
 }) {
-  // We preserve the session id in the diff/timeline URL when we
-  // have one, so a "Back" affordance (or the browser back button)
-  // can return the user to the chat they came from. When the
-  // view was opened from the session list, there's no session id
-  // and we drop them on the session list.
+  // Preserve the session id in the changes URL when we have one,
+  // so the browser back button or a "Back" affordance can return
+  // the user to the chat they came from.
   const base = activeSessionId
     ? sessionUrl(folder, activeSessionId)
     : folderUrl(folder);
@@ -35,11 +40,14 @@ export function ChatTabs({
       <TabLink href={base} active={active === "chat"}>
         Chat
       </TabLink>
-      <TabLink href={`${base}?view=diff`} active={active === "diff"}>
-        Diff
-      </TabLink>
-      <TabLink href={`${base}?view=timeline`} active={active === "timeline"}>
-        Timeline
+      <TabLink href={`${base}?view=changes`} active={active === "changes"}>
+        Changes
+        {changesBadge && changesBadge.files > 0 && (
+          <span className="ml-1.5 inline-flex items-center gap-1 font-mono text-[10px]">
+            <span className="text-emerald-400">+{changesBadge.additions}</span>
+            <span className="text-rose-400">−{changesBadge.deletions}</span>
+          </span>
+        )}
       </TabLink>
     </nav>
   );
@@ -59,7 +67,7 @@ function TabLink({
       href={href}
       aria-current={active ? "page" : undefined}
       className={
-        "relative flex-1 py-2.5 text-center text-[13px] font-medium tracking-wide " +
+        "relative flex flex-1 items-center justify-center py-2.5 text-center text-[13px] font-medium tracking-wide " +
         (active
           ? "text-neutral-100"
           : "text-neutral-500 active:bg-neutral-900")

@@ -14,9 +14,17 @@ test("parseRoute: simple folder path → sessions", () => {
   });
 });
 
-test("parseRoute: folder + ?view=diff → diff for that folder", () => {
+test("parseRoute: folder + ?view=changes → changes for that folder", () => {
+  assert.deepEqual(parseRoute("home/me/proj", "changes"), {
+    k: "changes",
+    folder: "/home/me/proj",
+    sessionId: null,
+  });
+});
+
+test("parseRoute: legacy ?view=diff maps to changes for that folder", () => {
   assert.deepEqual(parseRoute("home/me/proj", "diff"), {
-    k: "diff",
+    k: "changes",
     folder: "/home/me/proj",
     sessionId: null,
   });
@@ -27,40 +35,42 @@ test("parseRoute: folder/s/<id> → chat for that session", () => {
     k: "chat",
     folder: "/home/me/proj",
     sessionId: "abc-123",
-    diff: false,
-    timeline: false,
   });
 });
 
-test("parseRoute: folder/s/<id>?view=timeline → timeline that preserves the session id", () => {
-  assert.deepEqual(parseRoute("home/me/proj/s/abc-123", "timeline"), {
-    k: "timeline",
+test("parseRoute: folder/s/<id>?view=changes → changes that preserves the session id", () => {
+  assert.deepEqual(parseRoute("home/me/proj/s/abc-123", "changes"), {
+    k: "changes",
     folder: "/home/me/proj",
     sessionId: "abc-123",
   });
 });
 
-test("parseRoute: folder + ?view=timeline → timeline for that folder", () => {
+test("parseRoute: legacy ?view=timeline maps to changes that preserves the session id", () => {
+  assert.deepEqual(parseRoute("home/me/proj/s/abc-123", "timeline"), {
+    k: "changes",
+    folder: "/home/me/proj",
+    sessionId: "abc-123",
+  });
+});
+
+test("parseRoute: folder + ?view=timeline maps to changes for that folder", () => {
   assert.deepEqual(parseRoute("home/me/proj", "timeline"), {
-    k: "timeline",
+    k: "changes",
     folder: "/home/me/proj",
     sessionId: null,
   });
 });
 
-test("parseRoute: folder/s/<id>?view=diff → diff that preserves the session id", () => {
-  // The chat's tab bar uses the preserved sessionId so a
-  // "Back" affordance can return the user to the chat.
+test("parseRoute: folder/s/<id>?view=diff → changes that preserves the session id", () => {
   assert.deepEqual(parseRoute("home/me/proj/s/abc-123", "diff"), {
-    k: "diff",
+    k: "changes",
     folder: "/home/me/proj",
     sessionId: "abc-123",
   });
 });
 
 test("parseRoute: folder name that is exactly 'd' does not collide with /d/<...>", () => {
-  // A folder literally called "d" must still parse as a
-  // sessions request, not as a malformed route.
   assert.deepEqual(parseRoute("d", null), {
     k: "sessions",
     folder: "/d",
@@ -72,25 +82,16 @@ test("parseRoute: folder name that is exactly 'd' does not collide with /d/<...>
 });
 
 test("parseRoute: a folder/s/ without an id falls back to the root view", () => {
-  // The "s" segment must be second-to-last: .../s/<id>.
-  // Trailing "s" with no id is malformed; treat as root.
   assert.deepEqual(parseRoute("home/me/proj/s", null), { k: "folders" });
 });
 
 test("parseRoute: extra segments after the session id fall back to the root view", () => {
-  // .../s/<id>/extra — only <id> is allowed as the last
-  // segment. Anything else is malformed.
   assert.deepEqual(parseRoute("home/me/proj/s/abc/extra", null), {
     k: "folders",
   });
 });
 
 test("parseRoute: paths with spaces survive a URL round-trip", () => {
-  // encodeURI encodes spaces as %20, but the router hands
-  // us the URL-decoded value. So an outbound folder URL
-  // "/a b/c d" → "/f/a%20b/c%20d" arrives at the server as
-  // splat = "a b/c d", and pathFromFolderParam re-adds the
-  // leading slash.
   const splat = "a b/c d";
   assert.deepEqual(parseRoute(splat, null), {
     k: "sessions",

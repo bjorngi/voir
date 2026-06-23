@@ -6,7 +6,6 @@ import {
 } from "~/lib/sessions.server";
 import { diffFiles, diffSummary, type DiffResult } from "~/lib/diff.server";
 import { list as listTimeline } from "~/lib/timeline.server";
-import type { SnapshotSummary } from "~/lib/timeline.server";
 import { sessionUrl } from "~/lib/urls";
 import { parseRoute } from "~/lib/route-parse";
 import type {
@@ -29,16 +28,15 @@ export type ChatLoaderData = Extract<
 /**
  * One route, four states (see parseRoute):
  *
- *   /                       → list of folders
- *   /f/<path>               → list of sessions in a folder
- *   /f/<path>?view=diff     → full diff of the worktree
- *   /f/<path>/s/<id>        → chat
- *   /f/<path>/s/<id>?view=diff → diff for the chat's folder
+ *   /                            → list of folders
+ *   /f/<path>                    → list of sessions in a folder
+ *   /f/<path>?view=changes       → combined diff + timeline
+ *   /f/<path>/s/<id>             → chat
+ *   /f/<path>/s/<id>?view=changes → changes for the chat's folder
  *
- * The `?view=diff` query param is used rather than a `/d` path
- * segment so the diff tab doesn't collide with a folder that's
- * literally named `d` (e.g. `/home/me/worktrees/d`). Splat
- * paths can't be disambiguated by shape alone.
+ * The `?view=changes` query param is used rather than a `/c` path
+ * segment so the changes tab doesn't collide with a folder that's
+ * literally named `c'.
  */
 export async function loader({ params, request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -90,30 +88,18 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     return { k: "sessions" as const, folders, folder, sessions: folder.sessions };
   }
 
-  if (p.k === "diff") {
-    // The full diff payload (per-file body, not just counts).
-    // Computed server-side, sent to the client for direct
-    // rendering. fromSessionId lets the tab bar's "Back"
-    // affordance return the user to the chat they came from.
-    const result: DiffResult = await diffFiles(p.folder);
+  if (p.k === "changes") {
+    // Combined changes view: current diff + snapshot history.
+    const [result, snapshots] = await Promise.all([
+      diffFiles(p.folder),
+      listTimeline(p.folder),
+    ]);
     return {
-      k: "diff" as const,
+      k: "changes" as const,
       folders,
       folder,
       fromSessionId: p.sessionId,
       diff: result,
-    };
-  }
-
-  if (p.k === "timeline") {
-    // Per-folder snapshot history. fromSessionId lets the tab
-    // bar preserve the back-link to the chat the user came from.
-    const snapshots: SnapshotSummary[] = await listTimeline(p.folder);
-    return {
-      k: "timeline" as const,
-      folders,
-      folder,
-      fromSessionId: p.sessionId,
       snapshots,
     };
   }

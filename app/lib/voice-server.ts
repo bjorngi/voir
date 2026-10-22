@@ -339,22 +339,45 @@ interface UpgradeServer {
  * Attach the /api/voice WebSocket endpoint to an HTTP server (the
  * Vite dev server). Only upgrades for this exact path are handled;
  * Vite's HMR socket is untouched.
+ *
+ * `log` is a best-effort diagnostic sink — every connection,
+ * provider session and audio byte count is reported so a
+ * "mic on but nothing happens" report can be pinpointed from the
+ * server log instead of guesswork.
  */
-export function attachVoiceServer(httpServer: UpgradeServer) {
+export function attachVoiceServer(
+  httpServer: UpgradeServer,
+  log: (msg: string) => void = () => {},
+) {
   const wss = new WebSocketServer({ noServer: true });
+  let connSeq = 0;
   httpServer.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname !== "/api/voice") return;
     wss.handleUpgrade(req, socket, head, (client) => {
+      const id = ++connSeq;
       let provider: SttProvider | null = null;
+      let bytesIn = 0;
+      let sawFirstAudio = false;
+      let eventsOut = 0;
       const emit = (ev: ToClient) => {
         if (client.readyState === WebSocket.OPEN) {
+          eventsOut++;
+          if (ev.type === "error") {
+            log(`voice #${id}: error → ${ev.message}`);
+          }
           client.send(JSON.stringify(ev));
         }
       };
+      log(`voice #${id}: connected`);
 
       client.on("message", (data: Buffer, isBinary: boolean) => {
         if (isBinary) {
+          if (!sawFirstAudio) {
+            sawFirstAudio = true;
+            log(`voice #${id}: first audio (${data.length}B)`);
+          }
+          bytesIn += data.length;
           provider?.audio(data);
           return;
         }
@@ -370,12 +393,16 @@ export function attachVoiceServer(httpServer: UpgradeServer) {
           provider?.close();
           provider = createProvider(emit, m.language);
           provider.control(m);
+          log(`voice #${id}: start (lang=${m.language ?? "-"})`);
         } else if (m.type === "stop") {
           provider?.stop();
         }
       });
 
       client.on("close", () => {
+        log(
+          `voice #${id}: closed (audio=${bytesIn}B, events=${eventsOut})`,
+        );
         provider?.close();
         provider = null;
       });

@@ -112,7 +112,9 @@ function tailscaleProxy(): Plugin {
         // only for upgrades at /api/voice — Vite's HMR socket is
         // untouched (its handler only matches its own path).
         // Dev-server-only: react-router-serve has no WS story.
-        const detachVoice = attachVoiceServer(httpServer);
+        const detachVoice = attachVoiceServer(httpServer, (msg) =>
+          server.config.logger.info(msg, { timestamp: false }),
+        );
         const stt = (process.env.VOICE_STT_PROVIDER ?? "mock").toLowerCase();
         server.config.logger.info(
           `  voice    →  STT: ${stt === "deepgram" ? `deepgram/${process.env.VOICE_STT_MODEL ?? "nova-2"}` : "mock (no key)"}`,

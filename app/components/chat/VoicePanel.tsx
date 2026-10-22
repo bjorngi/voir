@@ -149,7 +149,27 @@ export function VoicePanel({ voice }: { voice: VoiceHandle }) {
         <div className="w-full px-2 text-center font-mono text-[11px] text-neutral-600">
           {hint}
         </div>
+
+        {/* Debug line: pinpoint where the pipeline is when it
+            misbehaves — transport, context state, frames sent,
+            last provider event. Read via getStats() polled every
+            500ms; the 25 frames/s themselves never re-render. */}
+        <DebugLine voice={voice} />
       </div>
+    </div>
+  );
+}
+
+function DebugLine({ voice }: { voice: VoiceHandle }) {
+  const [stats, setStats] = useState(() => voice.getStats());
+  useEffect(() => {
+    const id = setInterval(() => setStats(voice.getStats()), 500);
+    return () => clearInterval(id);
+  }, [voice]);
+  return (
+    <div className="w-full px-2 text-center font-mono text-[10px] text-neutral-700">
+      {stats.ws} · ctx:{stats.ctx} · {stats.frames}f/{Math.round(stats.bytes / 1024)}kb ·
+      last:{stats.lastEvent || "-"}
     </div>
   );
 }

@@ -51,6 +51,15 @@ export interface VoiceHandle {
   bargeIn: () => void;
   /** Nudge a suspended audio context back to running (Android). */
   resume: () => void;
+  /** Diagnostics for the debug line: frames sent, transport and
+   *  context state, last provider event. */
+  getStats: () => {
+    frames: number;
+    bytes: number;
+    lastEvent: string;
+    ws: string;
+    ctx: string;
+  };
 }
 
 export function useVoiceMode(opts: {
@@ -100,6 +109,28 @@ export function useVoiceMode(opts: {
   const reviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptsRef = useRef(0);
+  // Diagnostics for the panel's debug line — refs, read via
+  // getStats(), so 25 audio frames/s never re-render React.
+  const framesRef = useRef(0);
+  const bytesRef = useRef(0);
+  const lastEventRef = useRef("");
+
+  /** Diagnostics for the panel's debug line. */
+  const getStats = useCallback(
+    () => ({
+      frames: framesRef.current,
+      bytes: bytesRef.current,
+      lastEvent: lastEventRef.current,
+      ws:
+        wsRef.current?.readyState === WebSocket.OPEN
+          ? "open"
+          : wsRef.current?.readyState === WebSocket.CONNECTING
+            ? "connecting"
+            : "closed",
+      ctx: ctxRef.current?.state ?? "-",
+    }),
+    [],
+  );
 
   const sendText = useCallback((text: string) => {
     const t = text.trim();
@@ -137,6 +168,7 @@ export function useVoiceMode(opts: {
 
   const handleEvent = useCallback(
     (ev: { type: string; text?: string; message?: string }) => {
+      lastEventRef.current = ev.type;
       // Any new speech cancels a pending auto-send countdown — the
       // user kept talking, so this utterance continues.
       const cancelCountdown = () => {
@@ -285,8 +317,13 @@ export function useVoiceMode(opts: {
         src.connect(node);
         node.port.onmessage = (e) => {
           const ws = wsRef.current;
+          const buf = e.data as ArrayBuffer;
+          if (buf.byteLength > 0) {
+            framesRef.current += 1;
+            bytesRef.current += buf.byteLength;
+          }
           if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(e.data as ArrayBuffer);
+            ws.send(buf);
           }
         };
         openSocket();
@@ -333,9 +370,7 @@ export function useVoiceMode(opts: {
     setPhase((p) => (p === "thinking" || p === "speaking" ? "listening" : p));
   }, []);
 
-  /** Best-effort resume of a suspended audio context (Android can
-   *  suspend it mid-session — screen lock, backgrounding; taps
-   *  count as the gesture that lets us resume). */
+  /** Nudge a suspended audio context back to running (Android). */
   const resume = useCallback(() => {
     const ctx = ctxRef.current;
     if (ctx && ctx.state === "suspended") {
@@ -416,5 +451,6 @@ export function useVoiceMode(opts: {
     editNow,
     bargeIn,
     resume,
+    getStats,
   };
 }

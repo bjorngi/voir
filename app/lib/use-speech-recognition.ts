@@ -80,6 +80,10 @@ export function useSpeechRecognition(opts: {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recRef = useRef<SRInstance | null>(null);
+  // Highest result index already appended as final in the current
+  // recognition session. -1 = none yet. Guards against recognizers
+  // re-delivering final results (see onresult).
+  const finalIdxRef = useRef(-1);
   // True between user taps (want to listen) vs. the recognition
   // session actually running (may flap as restarts occur).
   const wantRef = useRef(false);
@@ -104,7 +108,13 @@ export function useSpeechRecognition(opts: {
     rec.continuous = true;
     rec.interimResults = true;
 
-    rec.onstart = () => setListening(true);
+    rec.onstart = () => {
+      setListening(true);
+      // Per-session bookkeeping: result indexes of finals already
+      // appended (see onresult). Resets on every (re)start, since
+      // a new recognition session starts its results array over.
+      finalIdxRef.current = -1;
+    };
     rec.onend = () => {
       setListening(false);
       if (wantRef.current) {
@@ -123,12 +133,22 @@ export function useSpeechRecognition(opts: {
       }
     };
     rec.onresult = (e) => {
+      // Some mobile recognizers re-deliver final results they
+      // already sent (same segment again, or the whole transcript
+      // so far marked final once more). Skip any result at or
+      // below the highest final index already processed this
+      // session — onFinal would otherwise append duplicates.
       let interim = "";
       let final = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      const from = Math.max(e.resultIndex, finalIdxRef.current + 1);
+      for (let i = from; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) final += r[0].transcript;
-        else interim += r[0].transcript;
+        if (r.isFinal) {
+          final += r[0].transcript;
+          finalIdxRef.current = i;
+        } else {
+          interim += r[0].transcript;
+        }
       }
       if (final) optsRef.current.onFinal(final);
       if (interim) optsRef.current.onInterim(interim);

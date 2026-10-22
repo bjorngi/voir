@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import type { SlashCommand } from "~/lib/chat-types";
+import { appendFinal } from "~/lib/dictation";
 import { useSpeechRecognition } from "~/lib/use-speech-recognition";
 import { sessionUrl } from "~/lib/urls";
 
@@ -144,15 +145,19 @@ export function Composer({
   const [interim, setInterim] = useState("");
   const finalRef = useRef("");
   const interimRef = useRef("");
-  const joinFor = (base: string, more: string) =>
-    base && !/\s$/.test(base) && !/^\s/.test(more) ? base + " " + more : base + more;
   const mic = useSpeechRecognition({
     onInterim: (t) => {
       interimRef.current = t;
       setInterim(t);
     },
+    // Accumulate with appendFinal (overlap-deduping): recognizers
+    // re-deliver finals — the same segment twice, or the whole
+    // transcript so far — and the session-restart that keeps long
+    // dictation alive re-captures the odd word. Blind appending
+    // made words repeat many times over (see app/lib/dictation.ts
+    // for the failure modes and the heuristics).
     onFinal: (t) => {
-      finalRef.current = joinFor(finalRef.current, t.trim());
+      finalRef.current = appendFinal(finalRef.current, t);
       interimRef.current = "";
       setInterim("");
     },
@@ -161,11 +166,11 @@ export function Composer({
       // flushed by stop() has been delivered by now; commit finals
       // plus whatever interim never finalized (e.g. "aborted").
       setDictating(false);
-      const transcript = joinFor(finalRef.current, interimRef.current).trim();
+      const transcript = appendFinal(finalRef.current, interimRef.current).trim();
       finalRef.current = "";
       interimRef.current = "";
       setInterim("");
-      if (transcript) setText((prev) => joinFor(prev, transcript));
+      if (transcript) setText((prev) => appendFinal(prev, transcript));
       requestAnimationFrame(() => ref.current?.focus());
     },
   });
@@ -462,7 +467,11 @@ export function Composer({
             )}
           </div>
           <div className="mt-1.5 min-h-6 font-mono text-[14px] leading-relaxed text-neutral-100">
-            {joinFor(finalRef.current, interim) || (
+            {/* Display via appendFinal too: a restarted session's
+                interim can re-capture the tail of what's already
+                committed — dedupe live so the popup never shows
+                the same words twice. */}
+            {appendFinal(finalRef.current, interim) || (
               <span className="text-neutral-500">…</span>
             )}
           </div>

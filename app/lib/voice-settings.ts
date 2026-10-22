@@ -26,12 +26,14 @@ export const AUTO_SEND_MS: Record<AutoSend, number> = {
 
 export interface VoicePrefs {
   ttsVoice: string | null;
+  ttsSpeed: number;
   narrate: boolean;
   autoSend: AutoSend;
 }
 
 const DEFAULTS: VoicePrefs = {
   ttsVoice: null,
+  ttsSpeed: 1,
   narrate: true,
   autoSend: "normal",
 };
@@ -39,6 +41,7 @@ const DEFAULTS: VoicePrefs = {
 export function useVoicePrefs(): {
   prefs: VoicePrefs;
   setTtsVoice: (v: string | null) => void;
+  setTtsSpeed: (v: number) => void;
   setNarrate: (v: boolean) => void;
   setAutoSend: (v: AutoSend) => void;
 } {
@@ -52,6 +55,10 @@ export function useVoicePrefs(): {
       setPrefs((p) => ({
         ttsVoice:
           typeof parsed.ttsVoice === "string" ? parsed.ttsVoice : p.ttsVoice,
+        ttsSpeed:
+          typeof parsed.ttsSpeed === "number" && parsed.ttsSpeed >= 0.7 && parsed.ttsSpeed <= 1.5
+            ? parsed.ttsSpeed
+            : p.ttsSpeed,
         narrate: typeof parsed.narrate === "boolean" ? parsed.narrate : p.narrate,
         autoSend:
           parsed.autoSend === "fast" ||
@@ -77,6 +84,7 @@ export function useVoicePrefs(): {
   return {
     prefs,
     setTtsVoice: (v) => persist({ ...prefs, ttsVoice: v }),
+    setTtsSpeed: (v) => persist({ ...prefs, ttsSpeed: v }),
     setNarrate: (v) => persist({ ...prefs, narrate: v }),
     setAutoSend: (v) => persist({ ...prefs, autoSend: v }),
   };

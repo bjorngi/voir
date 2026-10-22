@@ -30,6 +30,7 @@ export function VoicePanel({
   tts,
   prefs,
   setTtsVoice,
+  setTtsSpeed,
   setNarrate,
   setAutoSend,
 }: {
@@ -37,6 +38,7 @@ export function VoicePanel({
   tts: Tts;
   prefs: VoicePrefs;
   setTtsVoice: (v: string | null) => void;
+  setTtsSpeed: (v: number) => void;
   setNarrate: (v: boolean) => void;
   setAutoSend: (v: AutoSend) => void;
 }) {
@@ -195,6 +197,7 @@ export function VoicePanel({
                       tts.speak("Hi, this is how I will read the replies.", {
                         force: true,
                         voice: selectedVoice || undefined,
+                        speed: prefs.ttsSpeed,
                       })
                     }
                     disabled={tts.voices.length === 0}
@@ -202,6 +205,26 @@ export function VoicePanel({
                   >
                     ▶ Preview
                   </button>
+                </label>
+
+                <label className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-widest text-neutral-500">
+                    Speed
+                  </span>
+                  <select
+                    value={String(prefs.ttsSpeed)}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (!Number.isNaN(v)) setTtsSpeed(v);
+                    }}
+                    className="h-9 min-w-0 flex-1 appearance-none border border-neutral-800 bg-neutral-900 px-2 font-mono text-[13px] text-neutral-100 outline-none focus:border-neutral-600"
+                  >
+                    <option value="0.8">Slow — 0.8×</option>
+                    <option value="0.9">Relaxed — 0.9×</option>
+                    <option value="1">Normal — 1×</option>
+                    <option value="1.15">Brisk — 1.15×</option>
+                    <option value="1.3">Fast — 1.3×</option>
+                  </select>
                 </label>
 
                 <label className="flex min-w-0 flex-1 items-center gap-2">

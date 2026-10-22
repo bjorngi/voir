@@ -42,8 +42,8 @@ export interface Tts {
   setEnabled: (v: boolean) => void;
   /** Speak text. No-op when disabled unless `force` (voice mode
    *  narrates even with the global toggle off). `voice` overrides
-   *  the neural voice for this utterance (the picker's preview). */
-  speak: (text: string, opts?: { force?: boolean; voice?: string }) => void;
+   *  the neural voice, `speed` the speaking rate (0.7–1.5). */
+  speak: (text: string, opts?: { force?: boolean; voice?: string; speed?: number }) => void;
   /** Drop the utterance queue, including anything mid-speech. */
   cancel: () => void;
   /** Whether audio is queued, in flight, or scheduled to play. */
@@ -105,7 +105,7 @@ export function useSpeechSynthesis(): Tts {
   // ------------------------------------------------------------------
   const wsRef = useRef<WebSocket | null>(null);
   const actxRef = useRef<AudioContext | null>(null);
-  const queueRef = useRef<Array<{ text: string; voice?: string }>>([]);
+  const queueRef = useRef<Array<{ text: string; voice?: string; speed?: number }>>([]);
   const inFlightRef = useRef(false);
   const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartRef = useRef(0);
@@ -201,8 +201,8 @@ export function useSpeechSynthesis(): Tts {
   const pumpRef = useRef<() => void>(() => {});
 
   const speakNeural = useCallback(
-    (text: string, voice?: string) => {
-      queueRef.current.push({ text, voice });
+    (text: string, voice?: string, speed?: number) => {
+      queueRef.current.push({ text, voice, speed });
       pumpRef.current();
     },
     [],
@@ -227,6 +227,7 @@ export function useSpeechSynthesis(): Tts {
           type: "speak",
           text: next.text,
           ...(next.voice ? { voice: next.voice } : {}),
+          ...(next.speed ? { speed: next.speed } : {}),
         }),
       );
     if (ws.readyState === WebSocket.OPEN) send();
@@ -250,17 +251,20 @@ export function useSpeechSynthesis(): Tts {
   }, []);
 
   const speak = useCallback(
-    (text: string, sopts?: { force?: boolean; voice?: string }) => {
+    (text: string, sopts?: { force?: boolean; voice?: string; speed?: number }) => {
       if (!text) return;
       if (!enabledRef.current && !sopts?.force) return;
       if (neuralRef.current) {
         preparePlayback();
-        speakNeural(text, sopts?.voice);
+        speakNeural(text, sopts?.voice, sopts?.speed);
         return;
       }
       if ("speechSynthesis" in window) {
         const u = new SpeechSynthesisUtterance(text);
         u.lang = navigator.language;
+        if (sopts?.speed && sopts.speed >= 0.5 && sopts.speed <= 2) {
+          u.rate = sopts.speed; // browser fallback has 0.1–10, kept sane
+        }
         window.speechSynthesis.speak(u);
       }
     },

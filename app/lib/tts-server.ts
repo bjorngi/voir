@@ -156,13 +156,19 @@ export function attachTtsServer(
         } catch {
           return;
         }
-        const m = msg as { type?: string; text?: string; voice?: string };
+        const m = msg as { type?: string; text?: string; voice?: string; speed?: number };
         if (m?.type === "speak" && typeof m.text === "string" && m.text) {
           const voice = validVoice(m.voice, cfg.model);
+          // Speaking-rate multiplier (0.7–1.5 per the API); clamped
+          // server-side, ignored when absent.
+          const speed =
+            typeof m.speed === "number" && m.speed >= 0.7 && m.speed <= 1.5
+              ? `&speed=${m.speed}`
+              : "";
           speaks += 1;
           dropUpstream(); // one synthesis at a time (client queues)
           const u = new WebSocket(
-            `wss://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=linear16&sample_rate=24000`,
+            `wss://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=linear16&sample_rate=24000${speed}`,
             { headers: { Authorization: `Token ${ttsKey()}` } },
           );
           upstream = u;

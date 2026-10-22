@@ -330,6 +330,7 @@ export function ChatView({
   const {
     prefs: voicePrefs,
     setTtsVoice: setVoiceTtsVoice,
+    setTtsSpeed: setVoiceTtsSpeed,
     setNarrate: setVoiceNarrate,
     setAutoSend: setVoiceAutoSend,
   } = useVoicePrefs();
@@ -435,6 +436,7 @@ export function ChatView({
             // default voice and the global toggle.
             force: voice.active && voicePrefs.narrate,
             voice: voicePrefs.ttsVoice ?? undefined,
+            speed: voicePrefs.ttsSpeed,
           });
         }
       } else {
@@ -442,10 +444,11 @@ export function ChatView({
         tts.speak(text.slice(spoken).trim(), {
           force: voice.active && voicePrefs.narrate,
           voice: voicePrefs.ttsVoice ?? undefined,
+          speed: voicePrefs.ttsSpeed,
         });
       }
     }
-  }, [messages, tts, voice.active, voicePrefs.narrate, voicePrefs.ttsVoice]);
+  }, [messages, tts, voice.active, voicePrefs.narrate, voicePrefs.ttsVoice, voicePrefs.ttsSpeed]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -477,6 +480,7 @@ export function ChatView({
           tts={tts}
           prefs={voicePrefs}
           setTtsVoice={setVoiceTtsVoice}
+          setTtsSpeed={setVoiceTtsSpeed}
           setNarrate={setVoiceNarrate}
           setAutoSend={setVoiceAutoSend}
         />

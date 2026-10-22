@@ -260,9 +260,15 @@ Three voice affordances, in increasing ambition:
   loop can be demoed; used by the docker compose dev stack) or
   `deepgram` (real streaming transcription, needs
   `VOICE_STT_API_KEY`; their VAD drives turn-taking).
-  Voice mode currently narrates with the browser's built-in
-  voices — a streaming neural TTS proxy is the natural next
-  step (same server-proxy pattern, needs a key pick).
+
+  **Narration** is neural by default when a Deepgram key exists:
+  sentences stream to `/api/tts`, are synthesized by Aura-2
+  (`VOICE_TTS_MODEL`, default `aura-2-thalia-en`), and the
+  PCM audio schedules gaplessly on a Web Audio graph. The
+  "Read aloud" header toggle uses the same engine. Without a
+  key it falls back to the browser's built-in speechSynthesis
+  (the noticeably synthetic voices) — set
+  `VOICE_TTS_PROVIDER=browser` to force that even with a key.
 
 ## Security: this is your job
 

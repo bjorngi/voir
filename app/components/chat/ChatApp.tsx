@@ -83,7 +83,13 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
           data.k === "chat" && tts.supported
             ? {
                 enabled: tts.enabled,
-                onToggle: () => tts.setEnabled(!tts.enabled),
+                onToggle: () => {
+                  // A gesture: also unlock audio playback for the
+                  // neural engine (AudioContexts start suspended
+                  // on mobile).
+                  tts.preparePlayback();
+                  tts.setEnabled(!tts.enabled);
+                },
               }
             : undefined
         }

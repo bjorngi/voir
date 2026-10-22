@@ -5,6 +5,7 @@ import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { attachVoiceServer } from "./app/lib/voice-server";
+import { attachTtsServer } from "./app/lib/tts-server";
 
 export default defineConfig(({ mode }) => {
   // Vite only wires VITE_-prefixed vars into import.meta.env; the
@@ -115,6 +116,12 @@ function tailscaleProxy(): Plugin {
         const detachVoice = attachVoiceServer(httpServer, (msg) =>
           server.config.logger.info(msg, { timestamp: false }),
         );
+        // Neural narration: same proxy pattern, /api/tts. No-op for
+        // browsers without a key — the client falls back to
+        // speechSynthesis.
+        const detachTts = attachTtsServer(httpServer, (msg) =>
+          server.config.logger.info(msg, { timestamp: false }),
+        );
         const stt = (process.env.VOICE_STT_PROVIDER ?? "mock").toLowerCase();
         server.config.logger.info(
           `  voice    →  STT: ${stt === "deepgram" ? `deepgram/${process.env.VOICE_STT_MODEL ?? "nova-2"}` : "mock (no key)"}`,
@@ -163,6 +170,7 @@ function tailscaleProxy(): Plugin {
         httpServer.on("close", () => {
           closeForwarders();
           detachVoice();
+          detachTts();
         });
       });
     },

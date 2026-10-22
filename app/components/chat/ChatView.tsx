@@ -350,10 +350,16 @@ export function ChatView({
   // edge only, sync down only on the hook's active falling edge.
   const prevWantedRef = useRef(voiceActive);
   useEffect(() => {
-    if (voiceActive && !prevWantedRef.current) voice.start();
+    if (voiceActive && !prevWantedRef.current) {
+      voice.start();
+      // The Voice tap is the gesture that unlocks neural playback
+      // — narration later in the turn needs the AudioContext
+      // running by then (mobile suspends it without a gesture).
+      tts.preparePlayback();
+    }
     if (!voiceActive && prevWantedRef.current) voice.stop();
     prevWantedRef.current = voiceActive;
-  }, [voiceActive, voice.start, voice.stop]);
+  }, [voiceActive, voice.start, voice.stop, tts.preparePlayback]);
   const prevActiveRef = useRef(voice.active);
   useEffect(() => {
     if (prevActiveRef.current && !voice.active && voiceActive) {

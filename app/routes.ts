@@ -10,6 +10,7 @@ export default [
   route("api/sessions/:sessionId/meta", "routes/api.session-meta.tsx"),
   route("api/sessions/:sessionId/action", "routes/api.session-action.tsx"),
   route("api/folder-files", "routes/api.folder-files.tsx"),
+  route("api/tts", "routes/api.tts.tsx"),
   route("api/folder-diff", "routes/api.folder-diff.tsx"),
   route("api/folders", "routes/api.folders.tsx"),
   route("api/timeline-restore", "routes/api.timeline-restore.tsx"),

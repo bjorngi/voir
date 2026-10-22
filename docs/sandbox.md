@@ -8,7 +8,7 @@ Voir ships with two ways to run agents on a machine:
 - `bin/voir-supervisor` — the resident supervisor. Owns what
   *should* be running on the machine, converges to it, and
   restarts crashed agents. For standing folders that must
-  survive reboots.
+  survive reboots. Full reference: [docs/supervisor.md](./supervisor.md).
 
 Both share the same bridge and registration core
 (`bin/acp-lib.mjs`); a supervised agent and a one-shot one are
@@ -79,7 +79,9 @@ curl -X DELETE 'http://localhost:9000/api/folders?path=/abs&name=pi'
 ## Resident supervisor
 
 `bin/voir-supervisor` keeps a fleet of agents alive on one
-machine. Two files, two owners:
+machine. This section is the overview — the full configuration
+and behavior reference is [docs/supervisor.md](./supervisor.md).
+Two files, two owners:
 
 ```jsonc
 // ~/.config/voir/supervisor.json  — authored by you, never written

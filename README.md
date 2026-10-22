@@ -218,6 +218,26 @@ acp-spawn --agent 'firejail --noprofile --private=. -- opencode acp' --name open
 Voir does not sandbox. That is the launcher's job, and the launcher's
 job is yours.
 
+## Keep a fleet running (supervisor)
+
+One-shot launchers die with their terminal — right for scratch
+worktrees and comparisons. For folders that should always be
+running, `voir-supervisor` owns a desired-state file
+(`~/.local/state/voir/agents.json`), starts and restarts agents
+per its preset catalog
+(`~/.config/voir/supervisor.json` — where your fence commands
+live), and re-registers with Voir every 30s so restarts on either
+side self-heal:
+
+```sh
+voir-supervisor add ~/code/infra --preset pi-fenced
+voir-supervisor            # run the daemon (systemd unit in the docs)
+voir-supervisor ls
+```
+
+Full configuration and behavior reference:
+[docs/supervisor.md](./docs/supervisor.md).
+
 ## Install it on your phone (PWA)
 
 Voir is an installable progressive web app: manifest, service

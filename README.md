@@ -34,13 +34,17 @@ built-in HTTPS instead (requires *HTTPS Certificates* enabled in
 the admin console, DNS section):
 
 ```sh
-tailscale serve --bg 9000   # https://<machine>.<tailnet>.ts.net
+tailscale serve --bg --https=8443 9000
+# → https://<machine>.<tailnet>.ts.net:8443
 ```
 
 Same origin as far as the browser is concerned, real Let's
 Encrypt cert, still tailnet-only, and `vite.config.ts` already
-allows the `<tailnet>.ts.net` Host header. The phone URL for
-everything voice/PWA is then `https://<machine>.<tailnet>.ts.net`.
+allows the `<tailnet>.ts.net` Host header. 443 is the default
+HTTPS port for serve — pass `--https=8443` (any of 443/8443/10000)
+when 443 is already taken, e.g. by a reverse proxy fronting your
+production instances. The phone URL for everything voice/PWA is
+then `https://<machine>.<tailnet>.ts.net:8443`.
 
 <img src="images/folder-overview.jpeg" width="360" alt="All folders connected to Voir" />
 

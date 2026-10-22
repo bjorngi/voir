@@ -1,37 +1,46 @@
 import os from "node:os";
 import net from "node:net";
-import type { Plugin, ViteDevServer } from "vite";
+import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from "vite";
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { attachVoiceServer } from "./app/lib/voice-server";
 
-export default defineConfig({
-  plugins: [tailwindcss(), reactRouter(), tsconfigPaths(), tailscaleProxy()],
-  server: {
-    // Loopback only. Remote preview (e.g. your phone over Tailscale)
-    // is handled by the tailscaleProxy plugin below — it listens on
-    // the Tailscale interface specifically and forwards to this
-    // loopback listener. The result is that `npm run dev` is
-    // reachable from loopback + your tailnet, and NOTHING is bound
-    // on LAN/WAN interfaces.
-    //
-    // The docker compose dev setup overrides this with
-    //   --host 0.0.0.0
-    // (containers need it to be reachable across namespaces).
-    host: "127.0.0.1",
-    port: 9000,
-    // DNS-rebinding protection stays on: IP hosts (127.0.0.1, the
-    // Tailscale 100.x address) and localhost are always allowed.
-    // The tailnet hostname must be allowed explicitly because
-    // `tailscale serve` (which provides the HTTPS that unlocks
-    // the microphone API + service worker on phones — plain HTTP
-    // over the tailnet is not a secure context) forwards it as
-    // the Host header. Scoped to this tailnet's subdomain, not
-    // all of ts.net.
-    allowedHosts: [".tailedc77f.ts.net"],
-  },
+export default defineConfig(({ mode }) => {
+  // Vite only wires VITE_-prefixed vars into import.meta.env; the
+  // server-side modules (voice STT providers) read process.env.
+  // Load .env explicitly (real shell env wins, dotenv-style) so
+  // VOICE_STT_* reach the provider factory at connection time.
+  const env = loadEnv(mode, process.cwd(), "");
+  for (const [k, v] of Object.entries(env)) {
+    if (!(k in process.env)) process.env[k] = v;
+  }
+  return {
+    plugins: [tailwindcss(), reactRouter(), tsconfigPaths(), tailscaleProxy()],
+    server: {
+      // Loopback only. Remote preview (e.g. your phone over Tailscale)
+      // is handled by the tailscaleProxy plugin below — it listens on
+      // the Tailscale interface specifically and forwards to this
+      // loopback listener. The result is that `npm run dev` is
+      // reachable from loopback + your tailnet, and NOTHING is bound
+      // on LAN/WAN interfaces.
+      //
+      // The docker compose dev setup overrides this with
+      //   --host 0.0.0.0
+      // (containers need it to be reachable across namespaces).
+      host: "127.0.0.1",
+      port: 9000,
+      // DNS-rebinding protection stays on: IP hosts (127.0.0.1, the
+      // Tailscale 100.x address) and localhost are always allowed.
+      // The tailnet hostname must be allowed explicitly because
+      // `tailscale serve` (which provides the HTTPS that unlocks
+      // the microphone API + service worker on phones — plain HTTP
+      // over the tailnet is not a secure context) forwards it as
+      // the Host header. Scoped to this tailnet's subdomain, not
+      // all of ts.net.
+      allowedHosts: [".tailedc77f.ts.net"],
+    },
+  };
 });
 
 // -----------------------------------------------------------------------
@@ -104,6 +113,11 @@ function tailscaleProxy(): Plugin {
         // untouched (its handler only matches its own path).
         // Dev-server-only: react-router-serve has no WS story.
         const detachVoice = attachVoiceServer(httpServer);
+        const stt = (process.env.VOICE_STT_PROVIDER ?? "mock").toLowerCase();
+        server.config.logger.info(
+          `  voice    →  STT: ${stt === "deepgram" ? `deepgram/${process.env.VOICE_STT_MODEL ?? "nova-2"}` : "mock (no key)"}`,
+          { timestamp: false },
+        );
 
         for (const ip of tailscaleIPv4s()) {
           const fwd = net.createServer((socket) => {

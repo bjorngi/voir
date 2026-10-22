@@ -3,13 +3,16 @@
 // start message, synthetic PCM16 audio (speech bursts + silence),
 // and verifies the normalized events stream back.
 //
-//   node test/voice-roundtrip.mjs http://127.0.0.1:9000
+//   node test/voice-roundtrip.mjs http://127.0.0.1:9000 [--expect-speech]
 //
-// Speech is synthesized as a 220Hz square wave — enough energy for
-// the mock's segmenter, and it doubles as a quick check that the
-// frame math on the server is right.
+// --expect-speech asserts the full event sequence (interim /
+// final / utterance_end) — meaningful for the mock provider,
+// which "transcribes" a tone into canned phrases. Without the
+// flag (real providers: a tone isn't speech), the check is that
+// the pipeline connects, relays audio, and never errors.
 
 const base = process.argv[2] ?? "http://127.0.0.1:9000";
+const expectSpeech = process.argv.includes("--expect-speech");
 const url = base.replace(/^http/, "ws") + "/api/voice";
 
 const { WebSocket } = await import("ws");
@@ -42,15 +45,20 @@ ws.on("close", () => {
   const finals = events.filter((e) => e.type === "final");
   const ends = events.filter((e) => e.type === "utterance_end");
   const errors = events.filter((e) => e.type === "error");
-  console.log("events:", kinds.join(", "));
-  const ok =
-    interims.length > 0 &&
-    finals.length >= 1 &&
-    ends.length >= 1 &&
-    errors.length === 0;
+  console.log("events:", kinds.join(", ") || "(none)");
+  const ok = errors.length === 0
+    ? expectSpeech
+      ? interims.length > 0 && finals.length >= 1 && ends.length >= 1
+      : true
+    : false;
   console.log(
-    ok ? "PASS: interim/final/utterance_end all received" : "FAIL",
+    ok
+      ? expectSpeech
+        ? "PASS: interim/final/utterance_end all received"
+        : "PASS: connected, audio relayed, no errors"
+      : "FAIL",
   );
+  if (errors.length) console.log("errors:", JSON.stringify(errors));
   if (finals[0]) console.log("final transcript:", JSON.stringify(finals[0].text));
   process.exit(ok ? 0 : 1);
 });

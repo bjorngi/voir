@@ -161,13 +161,21 @@ class DeepgramProvider implements SttProvider {
   private ws: WebSocket | null = null;
   private queue: Buffer[] = [];
   private closed = false;
+  private everOpened = false;
+  private fellBack = false;
+  private errEmitted = false;
 
   constructor(
     private key: string,
     private model: string,
-    private language: string | undefined,
+    language: string | undefined,
     private emit: Emit,
-  ) {}
+  ) {
+    // BCP47 ("en-US", "nb-NO") → primary subtag ("en", "nb").
+    this.language = language?.split("-")[0] || undefined;
+  }
+
+  private language: string | undefined;
 
   private connect() {
     if (this.ws || this.closed) return;
@@ -179,7 +187,7 @@ class DeepgramProvider implements SttProvider {
       smart_format: "true",
       interim_results: "true",
       endpointing: "300",
-      utterance_end_ms: "700",
+      utterance_end_ms: "1000", // Deepgram minimum step size
     });
     if (this.language) params.set("language", this.language);
     const ws = new WebSocket(
@@ -188,6 +196,7 @@ class DeepgramProvider implements SttProvider {
     );
     this.ws = ws;
     ws.on("open", () => {
+      this.everOpened = true;
       for (const b of this.queue) ws.send(b);
       this.queue = [];
     });
@@ -218,21 +227,42 @@ class DeepgramProvider implements SttProvider {
         this.emit({ type: "utterance_end" });
       }
     });
-    ws.on("error", () => {
-      // The ws client surfaces errors here; a helpful message is
-      // sent by close() below when the provider never opened.
-    });
-    ws.on("close", (code) => {
-      this.ws = null;
-      if (!this.closed) {
+    ws.on("error", (err: Error) => {
+      if (this.ws !== ws) return;
+      if (!this.everOpened && !this.errEmitted) {
+        // Handshake-level failure. nova-3 only accepts a specific
+        // language list (e.g. it rejects "nb"); if the client's
+        // locale isn't one of them, silently fall back to multi —
+        // Deepgram's auto-detection — instead of failing the mode.
+        if (
+          this.language &&
+          this.language !== "multi" &&
+          !this.fellBack
+        ) {
+          this.fellBack = true;
+          this.language = "multi";
+          this.ws = null;
+          this.connect();
+          return;
+        }
+        this.errEmitted = true;
         this.emit({
           type: "error",
-          message:
-            code === 401
-              ? "Deepgram rejected the API key (VOICE_STT_API_KEY)."
-              : `Deepgram connection closed (code ${code}).`,
+          message: /401/.test(err.message)
+            ? "Deepgram rejected the API key (VOICE_STT_API_KEY)."
+            : `Deepgram connection failed: ${err.message}`,
         });
       }
+    });
+    ws.on("close", (code) => {
+      if (this.ws !== ws) return; // replaced by the language fallback
+      this.ws = null;
+      if (this.closed) return;
+      if (!this.everOpened) return; // handshake error already handled
+      this.emit({
+        type: "error",
+        message: `Deepgram connection closed (code ${code}).`,
+      });
     });
   }
 

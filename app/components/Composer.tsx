@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import type { SlashCommand } from "~/lib/chat-types";
 import { appendFinal } from "~/lib/dictation";
+import { fuzzyFiles } from "~/lib/fuzzy";
 import { useSpeechRecognition } from "~/lib/use-speech-recognition";
 import { sessionUrl } from "~/lib/urls";
 
@@ -85,6 +86,32 @@ function mimeFor(path: string): string | undefined {
   return MIME[path.slice(i + 1).toLowerCase()];
 }
 
+/** Unsent drafts (text + mentions), kept per folder+session in
+ * sessionStorage so they survive the tab bar's full-page
+ * navigations (Chat ↔ Files are plain <a> links, not client-side
+ * routing — module state would be wiped on every hop). Cleared
+ * on send; cleared when the browser tab closes. */
+interface Draft {
+  text: string;
+  mentions: Mention[];
+}
+const DRAFT_PREFIX = "voir:draft:";
+function loadDraft(key: string): Draft | undefined {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_PREFIX + key);
+    return raw ? (JSON.parse(raw) as Draft) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function saveDraft(key: string, draft: Draft): void {
+  try {
+    sessionStorage.setItem(DRAFT_PREFIX + key, JSON.stringify(draft));
+  } catch {
+    // quota/private-mode: drafts are best-effort
+  }
+}
+
 export function Composer({
   folder,
   sessionId,
@@ -94,6 +121,7 @@ export function Composer({
   queueDepth = 0,
   commands: initialCommands = [],
   injectText,
+  initialAttach,
 }: {
   folder: string;
   sessionId: string;
@@ -124,10 +152,29 @@ export function Composer({
    * replaces, not appends).
    */
   injectText?: { text: string; seq: number };
+  /**
+   * "Attach to chat" hand-off from the Files tab: a relpath
+   * seeded as an @-mention once on mount. The `?attach=` URL
+   * param is consumed (stripped) after use so reloads and
+   * back-forward don't re-attach.
+   */
+  initialAttach?: string;
 }) {
   const fetcher = useFetcher<{ error?: string; ok?: boolean }>();
-  const [text, setText] = useState("");
-  const [mentions, setMentions] = useState<Mention[]>([]);
+  // Draft key: per folder+session, so switching conversations keeps
+  // drafts separate.
+  const draftKey = folder + "\n" + sessionId;
+  const [text, setText] = useState(() => loadDraft(draftKey)?.text ?? "");
+  const [mentions, setMentions] = useState<Mention[]>(
+    () => loadDraft(draftKey)?.mentions ?? [],
+  );
+  // Persist the unsent draft (text + mentions) on every change so
+  // navigating away — e.g. to the Files tab to browse/attach —
+  // and back restores what the user was writing. Cleared on send
+  // (the save below then stores the emptied state).
+  useEffect(() => {
+    saveDraft(draftKey, { text, mentions });
+  }, [draftKey, text, mentions]);
   // Externally-injected draft: apply on new seq, land focus so
   // the keyboard is ready to fix the transcript.
   const injectedSeq = useRef(0);
@@ -137,6 +184,30 @@ export function Composer({
     setText(injectText.text);
     requestAnimationFrame(() => ref.current?.focus());
   }, [injectText]);
+  // Files-tab attach hand-off: seed the mention once, then strip
+  // ?attach= from the URL (the chat must be reloadable without
+  // re-attaching).
+  const attachedOnce = useRef(false);
+  useEffect(() => {
+    if (!initialAttach || attachedOnce.current) return;
+    attachedOnce.current = true;
+    const path = initialAttach;
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    setText((t) => (t.trim() ? `${t.replace(/\s+$/, "")} @${name} ` : `@${name} `));
+    setMentions((m) =>
+      m.some((x) => x.key === path)
+        ? m
+        : [...m, { key: path, relPath: path, name, mimeType: mimeFor(path) }],
+    );
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("attach")) {
+        url.searchParams.delete("attach");
+        history.replaceState(history.state, "", url);
+      }
+    } catch {}
+    requestAnimationFrame(() => ref.current?.focus());
+  }, [initialAttach]);
   // Seed the slash-command list from the loader snapshot; the
   // chat will push live updates via the EventSource. We don't
   // need to fetch this ourselves — the loader has it.
@@ -374,33 +445,7 @@ export function Composer({
   // Filter file list
   const fileMatches = useMemo(() => {
     if (fileQuery === null) return [];
-    const q = fileQuery.toLowerCase();
-    if (!q) return files.slice(0, 50);
-    // Cheap fuzzy: every char of q must appear in order in the path.
-    // Prefer matches near the basename.
-    const out: Array<{ path: string; score: number }> = [];
-    for (const p of files) {
-      const lower = p.toLowerCase();
-      let qi = 0;
-      let lastMatch = -1;
-      let ok = true;
-      for (let pi = 0; pi < lower.length && qi < q.length; pi++) {
-        if (lower[pi] === q[qi]) {
-          if (lastMatch === -1) lastMatch = pi;
-          qi++;
-        }
-      }
-      if (qi === q.length) {
-        // Score: basename match wins, then earlier match, then shorter path.
-        const base = p.slice(p.lastIndexOf("/") + 1).toLowerCase();
-        const baseHit = base.includes(q) ? 100 : 0;
-        const firstHit = lastMatch;
-        const len = -p.length;
-        out.push({ path: p, score: baseHit - firstHit + len });
-      }
-    }
-    out.sort((a, b) => b.score - a.score);
-    return out.slice(0, 30).map((x) => x.path);
+    return fuzzyFiles(files, fileQuery, 30);
   }, [files, fileQuery]);
 
   // Filter slash commands
@@ -495,18 +540,44 @@ export function Composer({
           {mentions.map((m) => (
             <span
               key={m.key}
-              className="inline-flex items-center gap-1.5 bg-neutral-800 px-2 py-0.5 font-mono text-[11px] text-neutral-300"
+              className="inline-flex items-stretch divide-x divide-neutral-700 bg-neutral-800 font-mono text-[11px] text-neutral-300"
             >
-              <span className="text-neutral-500">@</span>
-              {m.relPath}
+              {/* Left zone: file icon + path → jumps to the file in
+                  the Files tab (session preserved in the URL so the
+                  tab bar returns here). */}
+              <a
+                href={`${sessionUrl(folder, sessionId)}?view=files&file=${encodeURIComponent(m.relPath)}`}
+                title={`Open ${m.relPath} in Files`}
+                className="flex items-center gap-1.5 px-2 py-1 text-neutral-300 active:bg-neutral-700"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="shrink-0 text-neutral-500"
+                  aria-hidden="true"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span className="min-w-0 max-w-[40vw] truncate">
+                  {m.relPath}
+                </span>
+              </a>
+              {/* Right zone: remove from context */}
               <button
                 type="button"
                 onClick={() => {
                   setMentions((ms) => ms.filter((x) => x.key !== m.key));
                   setText((t) => t.replace(`@${m.name}`, "").replace(/  +/g, " "));
                 }}
-                className="text-neutral-500 active:text-neutral-200"
-                aria-label={`Remove @${m.name}`}
+                className="px-2 text-neutral-500 active:bg-neutral-700 active:text-neutral-200"
+                aria-label={`Remove @${m.name} from context`}
               >
                 ×
               </button>

@@ -24,7 +24,7 @@ export async function action({ params, request }: Route.ActionArgs) {
   if (request.method !== "POST") {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
-  let body: { folder?: string; kind?: string; value?: string };
+  let body: { folder?: string; kind?: string; value?: string; text?: string };
   try {
     body = await request.json();
   } catch {
@@ -58,6 +58,22 @@ export async function action({ params, request }: Route.ActionArgs) {
       }
       await sessionManager.setModel(folder, sessionId, body.value);
       return Response.json({ ok: true, currentModelId: body.value });
+    }
+  if (body.kind === "send") {
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (!text) {
+        return Response.json(
+          { error: "text is required for send" },
+          { status: 400 },
+        );
+      }
+      // Fire-and-forget like the composer: runPrompt drives the
+      // busy/settle broadcasts; the caller (the service worker's
+      // inline reply) just needs the turn accepted.
+      sessionManager.sendMessage(folder, sessionId, [
+        { type: "text", text },
+      ]);
+      return Response.json({ ok: true });
     }
     if (body.kind === "cancel") {
       sessionManager.cancel(folder, sessionId);

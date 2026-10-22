@@ -538,6 +538,7 @@ export function ChatView({
           <Composer
             folder={folder.path}
             sessionId={initial.id}
+            initialAttach={data.attach}
             busy={busy}
             queueDepth={queueDepth}
             commands={commands}

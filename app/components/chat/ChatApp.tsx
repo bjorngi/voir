@@ -8,10 +8,12 @@ import type { ChatLoaderData } from "~/routes/chat";
 import { folderUrl, sessionUrl } from "~/lib/urls";
 import { shortPath } from "~/lib/format";
 import { useSpeechSynthesis } from "~/lib/use-tts";
+import { usePush } from "~/lib/use-push";
 import { FolderTree } from "~/components/FolderTree";
 import { Picker } from "~/components/Picker";
 import { SessionDebugButton } from "~/components/SessionDebugButton";
 import { ChangesView } from "~/components/ChangesView";
+import { FileExplorer } from "~/components/FileExplorer";
 import { ChatView } from "./ChatView";
 import { ChatTabs, type ChangesBadge } from "./ChatTabs";
 import { Header } from "./Header";
@@ -34,12 +36,16 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
   // lives in the chat view. One hook instance for both — the
   // state is per-app, not per-view.
   const tts = useSpeechSynthesis();
+  // Push notifications: app-level like tts. The bell shows on every
+  // view once the probe settles (capable + VAPID configured).
+  const push = usePush();
 
   // The tab bar lives between the header and the body for
-  // chat and changes. Sessions-list and root views don't have
-  // one — a tab bar on the root would be misleading (the tabs
-  // are per-folder).
-  const showTabs = data.k === "chat" || data.k === "changes";
+  // chat, files and changes. Sessions-list and root views don't
+  // have one — a tab bar on the root would be misleading (the
+  // tabs are per-folder).
+  const showTabs =
+    data.k === "chat" || data.k === "changes" || data.k === "files";
   const label =
     data.k === "folders"
       ? "Folders"
@@ -47,23 +53,23 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
   const busy = data.k === "chat" ? data.session.busy : undefined;
 
   const changesBadge: ChangesBadge | undefined =
-    data.k === "chat" || data.k === "changes"
-      ? data.k === "chat"
-        ? data.folder.diffSummary
-          ? {
-              additions: data.folder.diffSummary.additions,
-              deletions: data.folder.diffSummary.deletions,
-              files: data.folder.diffSummary.files,
-            }
-          : undefined
-        : data.diff.ok
+    data.k === "chat" || data.k === "files"
+      ? data.folder.diffSummary
+        ? {
+            additions: data.folder.diffSummary.additions,
+            deletions: data.folder.diffSummary.deletions,
+            files: data.folder.diffSummary.files,
+          }
+        : undefined
+      : data.k === "changes"
+        ? data.diff.ok
           ? {
               additions: data.diff.summary.additions,
               deletions: data.diff.summary.deletions,
               files: data.diff.summary.files,
             }
           : undefined
-      : undefined;
+        : undefined;
 
   return (
     <div className="flex h-full flex-col bg-neutral-950">
@@ -93,6 +99,14 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
               }
             : undefined
         }
+        push={
+          push.state === "on" || push.state === "off" || push.state === "denied"
+            ? {
+                state: push.state,
+                onToggle: push.toggle,
+              }
+            : undefined
+        }
       />
       {showTabs && (
         <ChatTabs
@@ -100,7 +114,7 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
           activeSessionId={
             data.k === "chat" ? data.session.id : data.fromSessionId
           }
-          active={data.k === "chat" ? "chat" : "changes"}
+          active={data.k === "chat" ? "chat" : data.k === "files" ? "files" : "changes"}
           changesBadge={changesBadge}
         />
       )}
@@ -126,6 +140,7 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
             snapshots={data.snapshots}
           />
         )}
+        {data.k === "files" && <FileExplorer data={data} />}
 
         {pickerOpen && (
           <Picker

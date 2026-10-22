@@ -5,6 +5,7 @@ import {
   folderSummary,
 } from "~/lib/sessions.server";
 import { diffFiles, diffSummary, type DiffResult } from "~/lib/diff.server";
+import { listFiles } from "~/lib/files.server";
 import { list as listTimeline } from "~/lib/timeline.server";
 import { sessionUrl } from "~/lib/urls";
 import { parseRoute } from "~/lib/route-parse";
@@ -104,6 +105,19 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     };
   }
 
+  if (p.k === "files") {
+    // Read-only file explorer: the flat, cached file index (the
+    // same one the @-mention picker uses) — the tree is built and
+    // file contents are fetched client-side.
+    return {
+      k: "files" as const,
+      folders,
+      folder,
+      fromSessionId: p.sessionId,
+      files: await listFiles(p.folder),
+    };
+  }
+
   // chat
   const state = sessionManager.getFolder(p.folder);
   if (!state) {
@@ -142,6 +156,10 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       messages: session.messages,
       queueDepth: session.queueDepth ?? 0,
     },
+    // "Attach to chat" hand-off from the Files tab: a relpath the
+    // Composer seeds as an @-mention on mount, then strips from
+    // the URL so reloads don't re-attach.
+    attach: url.searchParams.get("attach") ?? undefined,
     availableModels: state.availableModels,
     availableModes: state.availableModes,
     currentModelId: state.currentModelId,

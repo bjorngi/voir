@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRevalidator } from "react-router";
 import type { DiffFile } from "~/lib/chat-types";
 import type { SnapshotSummary } from "~/lib/timeline.server";
+import { DiffBody } from "~/components/DiffView";
 
 /**
  * Combined changes view.
@@ -574,34 +575,109 @@ function SnapshotList({
   );
 }
 
+/**
+ * The "Uncommitted" section's file cards — every changed file,
+ * each with a GitHub-PR-style **viewed** check: marking a file
+ * viewed collapses it to its header (done reviewing); unchecking
+ * brings the body back. The set lives here and resets on reload,
+ * like GitHub resets "viewed" when new commits land.
+ */
 function CurrentDiffFiles({ files }: { files: DiffFile[] }) {
+  const [viewed, setViewed] = useState<Set<string>>(new Set());
+  const toggleViewed = (path: string) =>
+    setViewed((s) => {
+      const next = new Set(s);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   return (
     <div className="space-y-2">
-      {files.map((f) => (
-        <div
-          key={f.path}
-          className="rounded border border-neutral-800 bg-neutral-950"
-        >
-          <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-neutral-800 bg-neutral-950 px-2 py-1 font-mono text-[11px]">
-            <span className="text-emerald-400">+{f.additions}</span>
-            <span className="text-rose-400">−{f.deletions}</span>
-            <span className="min-w-0 flex-1 truncate text-neutral-300">{f.path}</span>
+      {files.map((f) => {
+        const isViewed = viewed.has(f.path);
+        return (
+          <div
+            key={f.path}
+            className={
+              "rounded bg-neutral-950 " +
+              (isViewed ? "border border-neutral-900" : "border border-neutral-800")
+            }
+          >
+            <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-neutral-800 bg-neutral-950 px-2 py-1 font-mono text-[11px]">
+              <span className="text-emerald-400">+{f.additions}</span>
+              <span className="text-rose-400">−{f.deletions}</span>
+              <span
+                className={
+                  "min-w-0 flex-1 truncate " +
+                  (isViewed ? "text-neutral-500" : "text-neutral-300")
+                }
+              >
+                {f.path}
+              </span>
+              <ViewedCheck viewed={isViewed} onToggle={() => toggleViewed(f.path)} />
+            </div>
+            {!isViewed && <DiffBody file={f} bordered={false} maxHeight={false} />}
           </div>
-          <pre className="p-1 font-mono text-[11px] leading-snug">
-            {f.hunks.map((h, i) => (
-              <div key={i}>
-                <div className="bg-neutral-900/60 px-1 py-0.5 text-neutral-600">
-                  {h.header}
-                </div>
-                {h.lines.map((l, j) => (
-                  <DiffLine key={j} l={l} />
-                ))}
-              </div>
-            ))}
-          </pre>
-        </div>
-      ))}
+        );
+      })}
     </div>
+  );
+}
+
+function ViewedCheck({
+  viewed,
+  onToggle,
+}: {
+  viewed: boolean;
+  onToggle: () => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  // After the collapse/expand commits, keep the tapped button in
+  // view — with 31 cards, closing one pulls the next file's diff
+  // up under your thumb, and you want to see which file you just
+  // closed. "nearest" = minimal movement; "instant" = no
+  // animation. (Skipped on mount — no scroll on page load.)
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    ref.current?.scrollIntoView({
+      block: "nearest",
+      behavior: "instant" as ScrollBehavior,
+    });
+  }, [viewed]);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onToggle}
+      aria-pressed={viewed}
+      title={viewed ? "Mark as not viewed" : "Mark as viewed (collapses the file)"}
+      className={
+        "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-widest " +
+        (viewed
+          ? "bg-neutral-900 text-emerald-400"
+          : "border border-neutral-800 text-neutral-600 active:text-neutral-300")
+      }
+    >
+      {/* square check, filled when viewed */}
+      <svg
+        width="11"
+        height="11"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+      viewed
+    </button>
   );
 }
 
@@ -730,18 +806,7 @@ function SnapshotDiff({ files }: { files: DiffFile[] }) {
             <span className="text-rose-400">−{f.deletions}</span>
             <span className="min-w-0 flex-1 truncate text-neutral-300">{f.path}</span>
           </div>
-          <pre className="p-1 font-mono text-[11px] leading-snug">
-            {f.hunks.map((h, i) => (
-              <div key={i}>
-                <div className="bg-neutral-900/60 px-1 py-0.5 text-neutral-600">
-                  {h.header}
-                </div>
-                {h.lines.map((l, j) => (
-                  <DiffLine key={j} l={l} />
-                ))}
-              </div>
-            ))}
-          </pre>
+          <DiffBody file={f} bordered={false} maxHeight={false} />
         </div>
       ))}
     </div>
@@ -876,25 +941,6 @@ async function fetchTimelineDiff(
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
-
-function DiffLine({ l }: { l: import("~/lib/chat-types").DiffLine }) {
-  return (
-    <div
-      className={
-        l.kind === "del"
-          ? "bg-rose-950/40 text-rose-300"
-          : l.kind === "add"
-            ? "bg-emerald-950/40 text-emerald-300"
-            : "text-neutral-400"
-      }
-    >
-      <span className="mr-2 select-none pl-1 text-neutral-600">
-        {l.kind === "del" ? "-" : l.kind === "add" ? "+" : " "}
-      </span>
-      {l.text || " "}
-    </div>
-  );
-}
 
 function formatTime(at: number): string {
   const d = new Date(at);

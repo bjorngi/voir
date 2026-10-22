@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DiffFile, DiffLine as DiffLineType } from "~/lib/chat-types";
+import { HighlightedInline, type Language } from "~/components/CodeBlock";
+import { langOf } from "~/lib/code-lang";
 
 /**
  * The full diff view for a single folder's worktree.
@@ -279,17 +281,57 @@ function DiffFileRow({
  * hunk header so the user can see which `@@` block they're
  * in while scrolling.
  */
-function DiffBody({ file }: { file: DiffFile }) {
+/** The wrap-toggle + horizontal-scroll + syntax-highlighted
+ * diff body for one file. Exported so ChangesView's file cards
+ * (Uncommitted + snapshot deltas) reuse the exact same shower.
+ * `maxHeight` keeps the chat preview scrollers bounded; the
+ * Changes tab passes false so cards grow with the page. */
+export function DiffBody({ file, bordered = true, maxHeight = true }: {
+  file: DiffFile;
+  /** False when embedded in a card that already draws the
+   * border+background (ChangesView's file cards). */
+  bordered?: boolean;
+  /** False = no `max-h-[70vh]`: the body grows with the page
+   * instead of scrolling inside the card. */
+  maxHeight?: boolean;
+}) {
+  const [wrap, setWrap] = useState(false);
+  const lang = langOf(file.path) as Language;
   return (
-    <div className="overflow-hidden border border-neutral-800 bg-neutral-950">
-      <pre className="max-h-[70vh] overflow-auto font-mono text-[12px] leading-snug">
+    <div
+      className={
+        "overflow-hidden bg-neutral-950" +
+        (bordered ? " border border-neutral-800" : "")
+      }
+    >
+      <div className="flex items-center justify-end border-b border-neutral-900 bg-neutral-950 px-2 py-1">
+        <button
+          type="button"
+          onClick={() => setWrap((w) => !w)}
+          aria-pressed={wrap}
+          title="Toggle long-line wrapping"
+          className={
+            "font-mono text-[10px] uppercase tracking-widest " +
+            (wrap ? "text-amber-300" : "text-neutral-600 active:text-neutral-300")
+          }
+        >
+          wrap {wrap ? "on" : "off"}
+        </button>
+      </div>
+      <pre
+        className={
+          (maxHeight ? "max-h-[70vh] " : "") +
+          "overflow-x-auto font-mono text-[12px] leading-snug " +
+          (wrap ? "whitespace-pre-wrap" : "whitespace-pre")
+        }
+      >
         {file.hunks.map((h, i) => (
-          <div key={i}>
+          <div key={i} className={wrap ? undefined : "min-w-max"}>
             <div className="bg-neutral-900/60 px-2 py-0.5 text-[11px] text-neutral-600">
               {h.header}
             </div>
             {h.lines.map((l, j) => (
-              <DiffLine key={j} l={l} />
+              <DiffLine key={j} l={l} lang={lang} wrap={wrap} />
             ))}
           </div>
         ))}
@@ -298,24 +340,31 @@ function DiffBody({ file }: { file: DiffFile }) {
   );
 }
 
-function DiffLine({ l }: { l: DiffLineType }) {
+function DiffLine({ l, lang, wrap }: {
+  l: DiffLineType;
+  lang: Language;
+  wrap: boolean;
+}) {
   // The `+`/`-` gutter helps mobile users distinguish additions
   // from deletions in bright sunlight. Color is supplementary,
-  // not the only signal.
+  // not the only signal. The line text itself is syntax
+  // highlighted; per-line tokenization loses multi-line context
+  // (rarely material at phone sizes).
   return (
     <div
       className={
-        l.kind === "del"
+        (l.kind === "del"
           ? "bg-rose-950/40 text-rose-300"
           : l.kind === "add"
             ? "bg-emerald-950/40 text-emerald-300"
-            : "text-neutral-400"
+            : "text-neutral-400") +
+        (wrap ? " whitespace-pre-wrap" : "")
       }
     >
       <span className="mr-2 select-none pl-2 text-neutral-600">
         {l.kind === "del" ? "-" : l.kind === "add" ? "+" : " "}
       </span>
-      {l.text || " "}
+      {l.text ? <HighlightedInline text={l.text} lang={lang} /> : " "}
     </div>
   );
 }

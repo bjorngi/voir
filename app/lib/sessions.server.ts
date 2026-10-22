@@ -342,6 +342,17 @@ class SessionManager {
     return () => set!.delete(listener);
   }
 
+  /**
+   * How many listeners (SSE viewers + internal watchers) are
+   * attached to this session right now. The inbox push watcher
+   * uses this to suppress notifications when a viewer is
+   * already watching the turn live: if the count is >1 besides
+   * itself, someone has the conversation open.
+   */
+  listenerCount(sessionId: string): number {
+    return this.listeners.get(sessionId)?.size ?? 0;
+  }
+
   async sendMessage(
     folder: string,
     sessionId: string,

@@ -4,12 +4,15 @@
  * picker. The dot pulses amber while a turn is in flight;
  * otherwise it sits dim.
  */
+import type { PushState } from "~/lib/use-push";
+
 export function Header({
   label,
   busy,
   onMenu,
   tts,
   voice,
+  push,
 }: {
   label: string;
   busy?: boolean;
@@ -22,6 +25,12 @@ export function Header({
   /** When present (chat view), renders the voice-mode toggle. */
   voice?: {
     active: boolean;
+    onToggle: () => void;
+  };
+  /** When present, renders the Web Push bell toggle. Push is
+ * app-level (not per-session), so callers pass it on every view. */
+  push?: {
+    state: PushState;
     onToggle: () => void;
   };
 }) {
@@ -68,6 +77,45 @@ export function Header({
           <span className="text-[11px] font-mono uppercase tracking-wider">
             Voice
           </span>
+        </button>
+      )}
+      {push && (
+        <button
+          type="button"
+          onClick={push.onToggle}
+          aria-pressed={push.state === "on"}
+          aria-label={
+            push.state === "on"
+              ? "Notifications enabled — click to disable"
+              : "Enable push notifications on this device"
+          }
+          title={
+            push.state === "on"
+              ? "Notifications enabled — click to disable"
+              : push.state === "denied"
+                ? "Notifications blocked in browser settings"
+                : "Get a push notification when a machine-seeded conversation lands"
+          }
+          className={
+            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded active:bg-neutral-900 " +
+            (push.state === "on" ? "text-amber-300" : "text-neutral-600")
+          }
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            {push.state !== "on" && <line x1="2" y1="2" x2="22" y2="22" />}
+          </svg>
         </button>
       )}
       {tts && (

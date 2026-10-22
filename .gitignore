@@ -8,3 +8,6 @@ build
 .react-router
 .cache
 *.log
+
+# Push subscription registry (generated at runtime)
+dev-data/push-subscriptions.json

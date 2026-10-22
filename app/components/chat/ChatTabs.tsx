@@ -1,11 +1,11 @@
 /**
- * The "Chat" / "Changes" tab bar between the header and the body.
- * Only shown on chat and changes views. Both tabs are full-width
- * on mobile so they're comfortable tap targets.
+ * The "Chat" / "Files" / "Changes" tab bar between the header and
+ * the body. Only shown on chat, files and changes views. Tabs are
+ * full-width on mobile so they're comfortable tap targets.
  *
- * The changes marker is `?view=changes` (a query param) rather
- * than a `/c` path segment so the URL doesn't collide with a
- * folder literally named `c'.
+ * The view markers are query params (`?view=changes`, `?view=files`)
+ * rather than `/c`/`/f` path segments so the URLs don't collide
+ * with a folder literally named `c' or `f'.
  */
 import { folderUrl, sessionUrl } from "~/lib/urls";
 
@@ -23,7 +23,7 @@ export function ChatTabs({
 }: {
   folder: string;
   activeSessionId: string | null;
-  active: "chat" | "changes";
+  active: "chat" | "changes" | "files";
   changesBadge?: ChangesBadge;
 }) {
   // Preserve the session id in the changes URL when we have one,
@@ -39,6 +39,9 @@ export function ChatTabs({
     >
       <TabLink href={base} active={active === "chat"}>
         Chat
+      </TabLink>
+      <TabLink href={`${base}?view=files`} active={active === "files"}>
+        Files
       </TabLink>
       <TabLink href={`${base}?view=changes`} active={active === "changes"}>
         Changes

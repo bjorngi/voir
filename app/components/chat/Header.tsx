@@ -37,27 +37,33 @@ export function Header({
           type="button"
           onClick={tts.onToggle}
           aria-pressed={tts.enabled}
-          aria-label="Toggle spoken replies"
-          title="Speak agent replies out loud"
+          aria-label="Toggle spoken replies (text to speech)"
+          title="Narrate agent replies out loud"
           className={
-            "inline-flex h-9 w-9 items-center justify-center rounded active:bg-neutral-900 " +
-            (tts.enabled ? "text-amber-300" : "text-neutral-600")
+            "inline-flex h-9 shrink-0 items-center gap-1.5 rounded px-2 active:bg-neutral-900 " +
+            (tts.enabled
+              ? "text-amber-300"
+              : "text-neutral-600")
           }
         >
           <svg
-            width="20"
-            height="20"
+            width="16"
+            height="16"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
+            aria-hidden="true"
           >
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
             <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
             <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
           </svg>
+          <span className="text-[11px] font-mono uppercase tracking-wider">
+            Read aloud
+          </span>
         </button>
       )}
       <button

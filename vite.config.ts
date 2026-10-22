@@ -21,10 +21,15 @@ export default defineConfig({
     // (containers need it to be reachable across namespaces).
     host: "127.0.0.1",
     port: 9000,
-    // DNS-rebinding protection stays on. IP hosts (127.0.0.1, the
-    // Tailscale 100.x address) and localhost are allowed by default;
-    // there is no reason for a dev server to accept arbitrary
-    // hostnames.
+    // DNS-rebinding protection stays on: IP hosts (127.0.0.1, the
+    // Tailscale 100.x address) and localhost are always allowed.
+    // The tailnet hostname must be allowed explicitly because
+    // `tailscale serve` (which provides the HTTPS that unlocks
+    // the microphone API + service worker on phones — plain HTTP
+    // over the tailnet is not a secure context) forwards it as
+    // the Host header. Scoped to this tailnet's subdomain, not
+    // all of ts.net.
+    allowedHosts: [".tailedc77f.ts.net"],
   },
 });
 

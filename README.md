@@ -27,6 +27,21 @@ address, so you can preview from your phone at
 exactly as below — the launcher runs on the same machine, so its
 `--ui` URL stays loopback regardless of where *you* browse from.
 
+For the features that need a **secure context** on the phone —
+microphone (dictation) and the service worker (PWA install) —
+plain HTTP over the tailnet doesn't qualify. Use Tailscale's
+built-in HTTPS instead (requires *HTTPS Certificates* enabled in
+the admin console, DNS section):
+
+```sh
+tailscale serve --bg 9000   # https://<machine>.<tailnet>.ts.net
+```
+
+Same origin as far as the browser is concerned, real Let's
+Encrypt cert, still tailnet-only, and `vite.config.ts` already
+allows the `<tailnet>.ts.net` Host header. The phone URL for
+everything voice/PWA is then `https://<machine>.<tailnet>.ts.net`.
+
 <img src="images/folder-overview.jpeg" width="360" alt="All folders connected to Voir" />
 
 For a production-style run:
@@ -198,14 +213,23 @@ Two affordances, both using the browser's built-in speech APIs —
 no extra services, no API keys, nothing leaves the device's
 platform speech stack:
 
-- **Dictation (speech → text):** the mic button in the composer
-  (visible when the browser supports the Web Speech API —
-  Chrome, Edge, Safari/iOS 14.5+; not Firefox). Tap, talk, tap
-  again. Interim words preview in the composer while you speak;
-  continuous silence doesn't end the session until you stop it.
-- **Spoken replies (text → speech):** the speaker button in the
-  chat header. When on, agent text messages are narrated as they
-  stream — sentence by sentence, so the voice tracks the text
+- **Dictation (speech → text):** **press and hold the Send
+  button** (hold ≥ ~250ms; works with the Queue button during a
+  turn too). A live-transcription popup opens over the composer
+  while you talk; release and the transcript lands in the
+  composer as a reviewable draft — never auto-sent, since
+  recognition makes mistakes and an agent turn is expensive. A
+  short press still sends immediately. Requires a browser with
+  the Web Speech API (Chrome, Edge, Safari/iOS 14.5+; on Firefox
+  the hold does nothing and the button stays press-to-send) **and
+  a secure context** — over the tailnet that means the
+  `tailscale serve` HTTPS URL, not plain HTTP (see above).
+  Long silences don't end the session while you keep holding;
+  release (or an incoming call) commits what was said so far.
+- **Spoken replies (text → speech):** the **"Read aloud"** button
+  in the chat header — that's the speaker icon's label and its
+  whole job: when on, agent text messages are narrated as they
+  stream, sentence by sentence, so the voice tracks the text
   instead of waiting for the turn to end. The choice persists in
   localStorage; sending a new message cancels any still-queued
   audio so turns can't talk over each other.

@@ -132,22 +132,105 @@ export function Composer({
   const [menuIndex, setMenuIndex] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
 
-  // Speech-to-text dictation. The recognizer is transport-only
-  // (see use-speech-recognition); this component owns the text
-  // state, so dictation works like typing: `base` is the text as
-  // of the last committed word, interim results preview on top
-  // of it, finals commit into it. Manual typing updates `base`
-  // too, so dictated and typed text interleave cleanly.
-  const micBase = useRef("");
+  // Speech-to-text dictation: hold the Send button, talk,
+  // release — the transcript lands in the composer as a draft
+  // (never auto-sent: recognition makes mistakes and an agent
+  // turn is expensive, so you review before sending). The
+  // recognizer is transport-only (see use-speech-recognition);
+  // while holding, finals accumulate in a ref and the interim
+  // preview lives in `interim` state for the overlay. Everything
+  // commits exactly once in onStop, when the session really ends.
+  const [dictating, setDictating] = useState(false);
+  const [interim, setInterim] = useState("");
+  const finalRef = useRef("");
+  const interimRef = useRef("");
   const joinFor = (base: string, more: string) =>
     base && !/\s$/.test(base) && !/^\s/.test(more) ? base + " " + more : base + more;
   const mic = useSpeechRecognition({
-    onInterim: (t) => setText(joinFor(micBase.current, t)),
+    onInterim: (t) => {
+      interimRef.current = t;
+      setInterim(t);
+    },
     onFinal: (t) => {
-      micBase.current = joinFor(micBase.current, t.trim());
-      setText(micBase.current);
+      finalRef.current = joinFor(finalRef.current, t.trim());
+      interimRef.current = "";
+      setInterim("");
+    },
+    onStop: () => {
+      // Fires once per dictation (restarts don't count). Any final
+      // flushed by stop() has been delivered by now; commit finals
+      // plus whatever interim never finalized (e.g. "aborted").
+      setDictating(false);
+      const transcript = joinFor(finalRef.current, interimRef.current).trim();
+      finalRef.current = "";
+      interimRef.current = "";
+      setInterim("");
+      if (transcript) setText((prev) => joinFor(prev, transcript));
+      requestAnimationFrame(() => ref.current?.focus());
     },
   });
+
+  // Hold-to-talk state machine for the Send button. Short press =
+  // send (as before). Holding ≥ 250ms = dictation: overlay pops
+  // up, mic starts; release stops it and the transcript becomes a
+  // draft. Pointer capture ensures release outside the button
+  // still counts; cancel (incoming call, system gesture) commits
+  // what was said so far rather than dropping it.
+  const HOLD_MS = 250;
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdingRef = useRef(false);
+
+  const startDictation = () => {
+    finalRef.current = "";
+    interimRef.current = "";
+    setInterim("");
+    setDictating(true);
+    mic.start();
+  };
+
+  const stopDictation = () => {
+    mic.stop(); // transcript commits in onStop
+  };
+
+  const clearHold = () => {
+    if (holdTimer.current !== null) {
+      clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  };
+
+  const onSendPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (!mic.supported) return; // no dictation here — plain press-to-send
+    e.preventDefault(); // no focus steal, no tap highlight
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+    holdingRef.current = false;
+    clearHold();
+    holdTimer.current = setTimeout(() => {
+      holdTimer.current = null;
+      holdingRef.current = true;
+      startDictation();
+    }, HOLD_MS);
+  };
+
+  const onSendPointerUp = () => {
+    clearHold();
+    if (holdingRef.current) {
+      holdingRef.current = false;
+      stopDictation();
+    } else {
+      send();
+    }
+  };
+
+  const onSendPointerCancel = () => {
+    clearHold();
+    if (holdingRef.current) {
+      holdingRef.current = false;
+      stopDictation(); // commits what was said instead of dropping it
+    }
+  };
 
   // Load file index on first @ and on folder change
   useEffect(() => {
@@ -282,6 +365,7 @@ export function Composer({
   }
 
   function send() {
+    if (dictating) stopDictation();
     if (!text.trim() && mentions.length === 0) return;
     // The server accepts new messages while a turn is running;
     // pi-acp will queue them for delivery between turns and
@@ -292,8 +376,6 @@ export function Composer({
     // into from the chat UI.
     const payload = { text: text.trim(), resources: mentions };
     setText("");
-    micBase.current = "";
-    mic.stop();
     setMentions([]);
     onSent?.();
     fetcher.submit(
@@ -309,9 +391,6 @@ export function Composer({
   function onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const next = e.target.value;
     setText(next);
-    // Manual typing becomes the dictation base so interim
-    // results don't resurrect deleted text.
-    micBase.current = next;
     // Drop mentions whose @-token was deleted entirely
     setMentions((ms) =>
       ms.filter((m) => next.includes(`@${m.name}`)),
@@ -364,6 +443,32 @@ export function Composer({
         </div>
       )}
 
+      {dictating && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="absolute bottom-full left-2 right-2 mb-1 border border-amber-400/40 bg-neutral-900 p-3 shadow-2xl"
+        >
+          <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-amber-300">
+            <span
+              aria-hidden="true"
+              className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400"
+            />
+            Listening — release to insert
+            {mic.error && (
+              <span className="ml-auto normal-case tracking-normal text-rose-400">
+                {mic.error}
+              </span>
+            )}
+          </div>
+          <div className="mt-1.5 min-h-6 font-mono text-[14px] leading-relaxed text-neutral-100">
+            {joinFor(finalRef.current, interim) || (
+              <span className="text-neutral-500">…</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {showAnyMenu && (
         <div className="absolute bottom-full left-2 right-2 mb-1 max-h-64 overflow-auto border border-neutral-800 bg-neutral-900 shadow-2xl">
           {showFileMenu &&
@@ -407,9 +512,6 @@ export function Composer({
 
       {fetcher.data?.error && (
         <div className="mb-2 px-2 text-xs text-rose-400">{fetcher.data.error}</div>
-      )}
-      {mic.error && (
-        <div className="mb-2 px-2 text-xs text-rose-400">{mic.error}</div>
       )}
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -467,50 +569,12 @@ export function Composer({
           }}
           placeholder={
             busy
-              ? "Type to queue a message… (@ to attach, / for commands, Esc to stop)"
-              : "Message…  (@ to attach a file, / for commands, ⌘+Enter to send)"
+              ? "Type to queue… (@ attach, / commands, Esc to stop — hold Send to dictate)"
+              : "Message…  (@ attach, / commands, ⌘+Enter to send — hold Send to dictate)"
           }
           className="scrollbar-hide composer-textarea flex-1 resize-none border border-neutral-800 bg-neutral-900 px-4 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-600"
         />
         <div className="flex shrink-0 items-stretch gap-2 sm:contents">
-          {mic.supported && (
-            <button
-              type="button"
-              onClick={() => {
-                if (mic.listening) {
-                  mic.stop();
-                } else {
-                  micBase.current = text;
-                  mic.start();
-                }
-              }}
-              aria-pressed={mic.listening}
-              aria-label={mic.listening ? "Stop dictation" : "Dictate message"}
-              title="Dictate (speech to text)"
-              className={
-                "h-11 flex-1 border px-3 transition-colors active:bg-white/10 sm:hidden sm:flex-none sm:px-4 " +
-                (mic.listening
-                  ? "border-amber-400/70 bg-transparent text-amber-300 animate-pulse"
-                  : "border-neutral-800 bg-transparent text-neutral-300")
-              }
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
-                <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
-                <line x1="12" y1="18" x2="12" y2="22" />
-              </svg>
-            </button>
-          )}
           {busy && (
             <button
               type="button"
@@ -521,18 +585,40 @@ export function Composer({
               Stop
             </button>
           )}
+          {/* Hold-to-talk lives on Send: press-and-hold (≥250ms)
+              starts dictation (if the browser supports STT), release
+              stops it and the transcript becomes a reviewable draft;
+              a short press sends as before. Never `disabled` —
+              pointer events must flow for the hold gesture — so the
+              empty state dims via classes instead. */}
           <button
             type="button"
-            onClick={send}
-            disabled={!text.trim() && mentions.length === 0}
+            onPointerDown={onSendPointerDown}
+            onPointerUp={onSendPointerUp}
+            onPointerCancel={onSendPointerCancel}
+            onContextMenu={(e) => {
+              // Long-press otherwise pops text-selection/callout UI
+              // over the dictation overlay on Android.
+              if (mic.supported) e.preventDefault();
+            }}
+            onClick={(e) => {
+              // Pointer paths send on pointerup; keyboard activation
+              // (Tab + Enter/Space) goes through click with detail 0.
+              if (e.detail === 0) send();
+            }}
+            aria-label={dictating ? "Dictating — release to insert" : "Send message — hold to dictate"}
             className={
-              "h-11 flex-1 border px-5 text-sm font-semibold uppercase tracking-wider transition-colors active:bg-white/10 sm:hidden sm:flex-none " +
-              (busy
-                ? "border-amber-400/70 bg-transparent text-amber-300"
-                : "border-white bg-transparent text-white disabled:border-neutral-700 disabled:text-neutral-600 disabled:active:bg-transparent")
+              "h-11 flex-1 select-none border px-5 text-sm font-semibold uppercase tracking-wider [touch-action:manipulation] transition-colors active:bg-white/10 sm:hidden sm:flex-none " +
+              (dictating
+                ? "border-amber-400/70 bg-transparent text-amber-300 animate-pulse"
+                : busy
+                  ? "border-amber-400/70 bg-transparent text-amber-300"
+                  : text.trim() || mentions.length > 0
+                    ? "border-white bg-transparent text-white"
+                    : "border-neutral-700 bg-transparent text-neutral-600 active:bg-transparent")
             }
           >
-            {busy ? "Queue" : "Send"}
+            {dictating ? "Listening…" : busy ? "Queue" : "Send"}
           </button>
         </div>
     </div>

@@ -67,6 +67,15 @@ export function useSpeechRecognition(opts: {
   onInterim: (text: string) => void;
   /** Finalized transcript. May fire several times per session. */
   onFinal: (text: string) => void;
+  /**
+   * The session ended for good — the user stopped (or the
+   * browser gave up and the restart was denied). Distinct from
+   * the onend/onend restarts that keep continuous dictation
+   * alive: onStop fires exactly once per start(), after any
+   * final result flushed by stop(). Callers commit their
+   * transcript here.
+   */
+  onStop?: () => void;
 }) {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +113,13 @@ export function useSpeechRecognition(opts: {
         } catch {
           // Restart without a user gesture (iOS) — end quietly.
           wantRef.current = false;
+          optsRef.current.onStop?.();
         }
+      } else {
+        // Stopped for good (or never started). Any final flushed
+        // by stop() has been delivered by now — see the ordering
+        // note in onStop's doc comment.
+        optsRef.current.onStop?.();
       }
     };
     rec.onresult = (e) => {

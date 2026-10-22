@@ -17,6 +17,7 @@
 
 import express from "express";
 import { createRequestHandler } from "@react-router/express";
+import type { ServerBuild } from "react-router";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { attachVoiceServer } from "../app/lib/voice-server.ts";
@@ -58,7 +59,10 @@ await loadEnvFile();
 
 const port = Number(process.env.PORT ?? 9000);
 const host = process.env.HOST ?? "0.0.0.0";
-const build = await import("../build/server/index.js");
+// The built bundle ships as plain JS without type declarations —
+// its module shape is the ServerBuild react-router/express expects
+// (the runtime check is the app working).
+const build = (await import("../build/server/index.js")) as unknown as ServerBuild;
 const log = (msg: string) =>
   console.log(new Date().toISOString().slice(11, 19), msg);
 

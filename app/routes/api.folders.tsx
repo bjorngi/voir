@@ -26,6 +26,8 @@ export async function loader() {
       agentUrl: f.agentUrl,
       agentName: f.agentName,
       registeredAt: f.registeredAt,
+      status: f.status,
+      lastSeenAt: f.lastSeenAt,
       sessionCount: f.sessions.size,
     })),
   };

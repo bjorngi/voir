@@ -522,7 +522,7 @@ const handlers = {
 
   "session/new"({ cwd }) {
     const id = randomUUID();
-    sessions.set(id, { cwd, createdAt: Date.now() });
+    sessions.set(id, { cwd, createdAt: Date.now(), history: [] });
     return {
       sessionId: id,
       models: { currentModelId: MODELS[0].modelId, availableModels: MODELS },
@@ -537,6 +537,9 @@ const handlers = {
       cwd,
       createdAt: existing?.createdAt ?? Date.now(),
       title: existing?.title,
+      // Live-turn history survives loads (replayed below),
+      // mirroring pi-acp replaying its persisted session.
+      history: existing?.history ?? [],
     });
     return {
       sessionId: id,
@@ -588,6 +591,21 @@ const handlers = {
   async "session/prompt"({ sessionId, prompt }) {
     // Echo a short thought, then a streamed reply, then end the turn.
     // The delays make the chat UI's streaming cursor visible.
+    //
+    // Every emitted update is recorded on the session's history
+    // so session/load can replay the transcript later, like
+    // pi-acp replays its persisted sessions. The user turn is
+    // recorded but NOT notified live: voir adds the user message
+    // to the transcript client-side when sending, so emitting it
+    // live would duplicate it. Replay includes it — that's how
+    // the transcript stays whole across a reconnect+resync.
+    const s = sessions.get(sessionId) ?? {};
+    s.history ??= [];
+    const emit = (update) => {
+      s.history.push(update);
+      notify("session/update", { sessionId, update });
+    };
+
     const userText = (prompt ?? [])
       .map((c) => (c?.type === "text" ? c.text : ""))
       .filter(Boolean)
@@ -595,12 +613,13 @@ const handlers = {
       .trim();
 
     if (userText) {
-      notify("session/update", {
-        sessionId,
-        update: {
-          sessionUpdate: "agent_thought_chunk",
-          content: { type: "text", text: `You said: "${userText.slice(0, 80)}".\n` },
-        },
+      s.history.push({
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: userText },
+      });
+      emit({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: `You said: "${userText.slice(0, 80)}".\n` },
       });
       await sleep(STREAM_DELAY_MS);
     }
@@ -612,25 +631,19 @@ const handlers = {
     // we don't need to thread a stable id through here.
     const chunkSize = 30;
     for (let i = 0; i < reply.length; i += chunkSize) {
-      notify("session/update", {
-        sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: reply.slice(i, i + chunkSize) },
-        },
+      emit({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: reply.slice(i, i + chunkSize) },
       });
       await sleep(STREAM_DELAY_MS);
     }
 
     if (!userText) {
-      notify("session/update", {
-        sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: {
-            type: "text",
-            text: "(empty prompt — say something and I'll echo it.)",
-          },
+      emit({
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "(empty prompt — say something and I'll echo it.)",
         },
       });
     }
@@ -680,6 +693,13 @@ async function dispatch(req) {
           const seed = sessions.get(sessionId);
           if (seed?.title && SEED_HISTORY[seed.title]) {
             await replayHistory(sessionId, seed.title);
+          } else if (seed?.history?.length) {
+            // Live session: replay the recorded transcript,
+            // like pi-acp replays its persisted session file.
+            // Same "replay complete" signal below.
+            for (const update of seed.history) {
+              notify("session/update", { sessionId, update });
+            }
           }
           notify("session/update", {
             sessionId,

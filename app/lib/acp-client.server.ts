@@ -23,7 +23,8 @@
  * on Voir to register the folder. When the script tears the agent
  * down, it calls
  *   DELETE /api/folders      { path }
- * (or Voir notices the endpoint went away on heartbeat).
+ * (or Voir notices on heartbeat and marks the folder degraded
+ * until the launcher's periodic re-registration brings it back).
  */
 
 import type {
@@ -122,6 +123,13 @@ export interface AcpTransport {
   close(): void;
   /** Optional liveness probe used for heartbeats. Returns true if alive. */
   ping?(): Promise<boolean>;
+  /**
+   * Subscribe to transport-level recovery: the stream (or
+   * endpoint) died and has now come back. Fired once per
+   * successful reopen — never for the first open. Transports
+   * that can't detect recovery may omit this.
+   */
+  onReconnect?(cb: () => void): () => void;
 }
 
 // -----------------------------------------------------------------------
@@ -130,10 +138,24 @@ export interface AcpTransport {
 
 export class HttpJsonRpcTransport implements AcpTransport {
   private listeners = new Set<(msg: JsonRpcMessage) => void>();
+  private reconnectListeners = new Set<() => void>();
   private sseAbort: AbortController | null = null;
   private closed = false;
+  /** True once the endpoint has ever served us an SSE stream. */
+  private everOpened = false;
+  /** Backoff attempt counter; reset on every successful open. */
+  private retryAttempt = 0;
+  private retryTimer: NodeJS.Timeout | null = null;
+  private readonly backoffBaseMs: number;
+  private readonly backoffCapMs: number;
 
-  constructor(public readonly url: string) {}
+  constructor(
+    public readonly url: string,
+    opts?: { backoffBaseMs?: number; backoffCapMs?: number },
+  ) {
+    this.backoffBaseMs = opts?.backoffBaseMs ?? 1_000;
+    this.backoffCapMs = opts?.backoffCapMs ?? 30_000;
+  }
 
   async send(msg: JsonRpcMessage): Promise<JsonRpcMessage | undefined> {
     if (this.closed) throw new Error("transport closed");
@@ -163,24 +185,59 @@ export class HttpJsonRpcTransport implements AcpTransport {
 
   close(): void {
     this.closed = true;
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     this.sseAbort?.abort();
     this.sseAbort = null;
   }
 
   async ping(): Promise<boolean> {
+    // 5s timeout so a half-open connection can't leave pings hanging
+    // past the 10s heartbeat interval. The acp-spawn bridge answers
+    // this locally: 204 = alive, 503 = bridge up but agent child
+    // dead, anything else / fetch error = transport down.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5_000);
     try {
       const res = await fetch(this.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", method: "ping" }),
+        signal: ctl.signal,
       });
       return res.ok;
     } catch {
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
+  onReconnect(cb: () => void): () => void {
+    this.reconnectListeners.add(cb);
+    return () => this.reconnectListeners.delete(cb);
+  }
+
+  /**
+   * Open (or reopen) the SSE notification stream.
+   *
+   * A dropped stream is retried with backoff forever once this
+   * endpoint has ever served us one: a dead GET is almost always
+   * a proxy timeout or a network blip, not a decision by the
+   * agent. The alternative — silently degrading to request/
+   * response-only — loses every session/update forever while
+   * POSTs keep working, so prompts succeed and the transcript
+   * silently diverges from the agent.
+   *
+   * Endpoints that never offered SSE (non-200, or not an
+   * event-stream) are left alone: request/response-only is a
+   * legitimate agent shape. A fetch *failure* (unreachable) is
+   * retried even then — unreachable is not a policy.
+   */
   private openStream() {
+    if (this.closed) return;
     this.sseAbort = new AbortController();
     fetch(this.url, {
       method: "GET",
@@ -188,13 +245,32 @@ export class HttpJsonRpcTransport implements AcpTransport {
       signal: this.sseAbort.signal,
     })
       .then(async (res) => {
-        if (!res.ok || !res.body) {
-          // No SSE? That's fine — server may not push anything unsolicited.
+        const ct = res.headers.get("content-type") ?? "";
+        if (!res.ok || !res.body || !ct.includes("text/event-stream")) {
+          // No SSE here. First time: accept the endpoint as
+          // request/response-only. After we've had a stream:
+          // the endpoint came back wrong or a proxy is
+          // erroring — keep trying.
+          if (this.everOpened) this.scheduleStreamRetry();
           return;
+        }
+        const wasReopen = this.everOpened;
+        this.everOpened = true;
+        this.retryAttempt = 0;
+        if (wasReopen) {
+          for (const l of this.reconnectListeners) {
+            try {
+              l();
+            } catch {}
+          }
         }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
+        if (process.env.DEBUG)
+          console.log(
+            `[sse] ${this.url} stream open (reopen=${wasReopen})`,
+          );
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -213,13 +289,42 @@ export class HttpJsonRpcTransport implements AcpTransport {
                   l(msg);
                 } catch {}
               }
-            } catch {}
+            } catch {
+              if (process.env.DEBUG)
+                console.log(`[sse] ${this.url} unparseable: ${data.slice(0, 60)}`);
+            }
           }
         }
+        if (process.env.DEBUG) console.log(`[sse] ${this.url} stream done`);
+        // Server ended the stream (bridge restart, proxy cut,
+        // agent recycling). Reopen unless we're closing down.
+        if (!this.closed) this.scheduleStreamRetry();
       })
-      .catch(() => {
-        // SSE open failed; we still work request/response-only.
+      .catch((err) => {
+        if (process.env.DEBUG)
+          console.log(
+            `[sse] ${this.url} open failed: ${(err as Error).message}`,
+          );
+        // Open failed: endpoint unreachable. Retry with backoff
+        // regardless of everOpened — unreachable is transient by
+        // definition, and we must not strand an agent that
+        // supports SSE but was momentarily down at open time.
+        if (!this.closed) this.scheduleStreamRetry();
       });
+  }
+
+  private scheduleStreamRetry() {
+    if (this.closed || this.retryTimer !== null) return;
+    const exp = Math.min(
+      this.backoffCapMs,
+      this.backoffBaseMs * 2 ** Math.min(this.retryAttempt, 5),
+    );
+    const delay = exp * (0.75 + Math.random() * 0.5); // jitter
+    this.retryAttempt += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.openStream();
+    }, delay);
   }
 }
 
@@ -246,6 +351,7 @@ export class AcpClient {
   private nextId = 0;
   private pending = new Map<number, Pending>();
   private listeners = new Set<AcpNotification>();
+  private reconnectListeners = new Set<() => void>();
   private capabilities: InitializeResult | null = null;
   private unsubscribeStream: (() => void) | null = null;
   public readonly label: string;
@@ -281,6 +387,20 @@ export class AcpClient {
       }
     });
 
+    // Transport-level reconnects: the agent leg died and came
+    // back, so session/update notifications were missed while
+    // it was down. Callers (the session manager) resync from
+    // agent truth when this fires.
+    this.transport.onReconnect?.(() => {
+      for (const l of this.reconnectListeners) {
+        try {
+          l();
+        } catch (err) {
+          console.error("[acp] reconnect listener error", err);
+        }
+      }
+    });
+
     this.capabilities = await this.request<InitializeResult>("initialize", {
       protocolVersion: 1,
       clientCapabilities: {
@@ -300,6 +420,16 @@ export class AcpClient {
   onNotification(listener: AcpNotification) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Subscribe to transport-level recovery (stream dropped and
+   * reopened). May be called before `start()`; listeners are
+   * attached once the transport exists.
+   */
+  onReconnect(listener: () => void): () => void {
+    this.reconnectListeners.add(listener);
+    return () => this.reconnectListeners.delete(listener);
   }
 
   capabilities_info(): InitializeResult | null {

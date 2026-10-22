@@ -149,7 +149,13 @@ export type ControlUpdate =
   | { type: "availableCommands"; commands: SlashCommand[] }
   | { type: "availableModels"; models: AvailableModel[] }
   | { type: "availableModes"; modes: AvailableMode[] }
-  | { type: "queueDepth"; depth: number };
+  | { type: "queueDepth"; depth: number }
+  /**
+   * The server rebuilt this session's transcript from agent
+   * truth (agent leg dropped and healed). Live tabs should
+   * reconnect their stream and re-snapshot — no payload.
+   */
+  | { type: "resync" };
 
 /** A folder in the sidebar. */
 export interface FolderSummary {
@@ -157,6 +163,10 @@ export interface FolderSummary {
   agentName?: string;
   agentUrl: string;
   registeredAt: number;
+  /** Agent-leg liveness: `degraded` while heartbeats are failing. */
+  status: "ok" | "degraded";
+  /** Epoch ms of the last successful heartbeat ping. */
+  lastSeenAt: number;
   sessions: SessionSummary[];
   /**
    * Cheap diff summary for the worktree: how many files

@@ -153,14 +153,18 @@ acp-spawn --agent codex-acp --name codex --ui http://localhost:9000
 
 `Ctrl-C` the launcher. The folder disappears from Voir, the agent
 subprocess is killed, the bridge port is freed. If you `kill -9` the
-launcher, Voir's heartbeat will notice the endpoint is gone and drop
-the folder within ~30 seconds (the heartbeat tolerates a couple
-of transient failures before dropping a folder).
+launcher, Voir's heartbeat notices the endpoint is gone within
+~10 seconds and marks the folder `degraded` (offline badge, kept
+sessions) — it keeps probing and heals automatically if the agent
+comes back; a human can remove the folder explicitly when wanted.
 
 ## Connection resilience
 
-The chat view holds one SSE connection per session, and it is
-designed to survive everything a phone can throw at it:
+There are two legs to keep alive, and both self-heal:
+
+**Browser → Voir.** The chat view holds one SSE connection per
+session, and it is designed to survive everything a phone can
+throw at it:
 
 - **Dropped connections reconnect automatically** — exponential
   backoff from 1s to a 15s cap, forever. Reconnecting replays
@@ -177,6 +181,27 @@ designed to survive everything a phone can throw at it:
   an unknown session from the agent, and the chat shows a small
   banner ("Agent offline — retrying…") until it's back — no
   page refresh needed, ever.
+
+**Voir → agent.** The server-side leg heals itself too:
+
+- **The agent's SSE notification stream reconnects on its own**
+  with backoff (1s → 30s cap) after a drop, and fires a
+  reconnect event in the session manager.
+- **Reconnect = resync.** Every session/update pushed while the
+  leg was down was lost, so after each recovery Voir replays
+  the folder's sessions from agent truth (`session/list` +
+  `session/load`). Live tabs are asked to re-snapshot via a
+  `resync` control message and rebuild their transcript — no
+  silent divergence, ever.
+- **Heartbeat failure degrades, never deletes.** A failing ping
+  marks the folder offline (badge in the sidebar, sessions kept)
+  and keeps probing; recovery triggers the same resync. The
+  old three-strike unregister — which destroyed recoverable
+  state on a 30-second blip — is gone. Only an explicit
+  unregistration removes a folder.
+- **Health checks don't spam the agent.** The bridge answers
+  Voir's heartbeat `ping` itself (204 alive / 503 child dead);
+  it is not an ACP method and is never forwarded to the agent.
 
 ## Sandbox the agent
 

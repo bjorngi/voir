@@ -16,6 +16,10 @@
 //   --ui   <url>      UI / orchestrator base URL (required)
 //   --port <n>        explicit port (default: pick a free one)
 //   --no-register     start the bridge only, don't talk to the UI
+//   --sse-lifetime <ms>  test aid: forcibly end each SSE stream
+//                       after <ms>, simulating proxy timeouts /
+//                       network drops so the UI's reconnect+resync
+//                       path can be exercised end to end
 //   -h, --help
 //
 // Lifecycle: spawn → wait for ready → register → wait for SIGINT/SIGTERM
@@ -47,6 +51,7 @@ function parseArgs(argv) {
     // should pass --url to override what gets registered.
     url: process.env.URL ?? null,
     register: true,
+    sseLifetime: process.env.SSE_LIFETIME ? Number(process.env.SSE_LIFETIME) : null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -57,6 +62,7 @@ function parseArgs(argv) {
     else if (a === "--bind") opts.bind = argv[++i];
     else if (a === "--url") opts.url = argv[++i];
     else if (a === "--no-register") opts.register = false;
+    else if (a === "--sse-lifetime") opts.sseLifetime = Number(argv[++i]);
     else if (a === "-h" || a === "--help") {
       printHelp();
       process.exit(0);
@@ -236,6 +242,19 @@ const server = createServer(async (req, res) => {
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const body = JSON.parse(Buffer.concat(chunks).toString());
+      // Transport-level health probe. `ping` is not an ACP method —
+      // it's the heartbeat the UI sends every 10s. Answer it here
+      // instead of forwarding it into the agent: forwarded as a
+      // JSON-RPC notification it was fire-and-forget (204 came back
+      // regardless of the child's state), and agents that don't
+      // implement the method (pi-acp) logged -32601 spam on every
+      // heartbeat. Liveness here = bridge up AND child not exited.
+      if (body.method === "ping" && body.id === undefined) {
+        const alive = child.exitCode === null && !shuttingDown;
+        res.statusCode = alive ? 204 : 503;
+        res.end();
+        return;
+      }
       if (body.id !== undefined) {
         const id = body.id;
         const p = new Promise((resolve) =>
@@ -263,14 +282,32 @@ const server = createServer(async (req, res) => {
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
       res.writeHead(200);
+      // Flush the response head immediately: Node buffers headers
+      // until the first write/end otherwise, so an SSE client's
+      // fetch (and thus its reconnect detection) wouldn't resolve
+      // until the agent happens to push its first notification.
+      // For a client that just reconnected after a drop, that can
+      // be a full keep-alive interval of dead time.
+      res.flushHeaders();
       sseClients.add(res);
       const ka = setInterval(() => {
         try {
           res.write(": ka\n\n");
         } catch {}
       }, 15_000);
+      // Test aid: forcibly end the stream after a lifetime,
+      // simulating a proxy timeout / network drop.
+      let lifetime = null;
+      if (opts.sseLifetime && opts.sseLifetime > 0) {
+        lifetime = setTimeout(() => {
+          try {
+            res.end();
+          } catch {}
+        }, opts.sseLifetime);
+      }
       req.on("close", () => {
         clearInterval(ka);
+        if (lifetime) clearTimeout(lifetime);
         sseClients.delete(res);
       });
     } else {

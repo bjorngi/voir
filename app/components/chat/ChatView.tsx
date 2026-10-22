@@ -222,6 +222,18 @@ export function ChatView({
               case "queueDepth":
                 setQueueDepth(c.depth);
                 return;
+              case "resync":
+                // The server rebuilt this session's transcript
+                // from agent truth (the agent leg dropped and
+                // healed). Reconnect immediately — the fresh
+                // snapshot replaces our now-stale messages. No
+                // backoff: the server asked for it.
+                if (es === sock) {
+                  connecting = false;
+                  attempts = 0;
+                  connect();
+                }
+                return;
             }
           }
           if (!isLive) {

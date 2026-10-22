@@ -52,6 +52,14 @@ export function FolderTree({
         >
           <span className="font-mono">{shortPath(folder.path)}</span>
         </a>
+        {folder.status === "degraded" && (
+          <span
+            title={`Agent offline — last seen ${new Date(folder.lastSeenAt).toLocaleTimeString()}`}
+            className="mr-2 shrink-0 select-none font-mono text-[11px] text-amber-500"
+          >
+            offline
+          </span>
+        )}
         {folder.diffSummary && (
           <a
             href={diffHref}

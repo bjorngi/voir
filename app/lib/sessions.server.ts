@@ -43,10 +43,8 @@ class SessionManager {
   private listeners = new Map<string, Set<SessionListener>>();
   private turnWaiters = new Map<string, TurnWaiter>();
   private heartbeats = new Map<string, NodeJS.Timeout>();
-  /** Consecutive heartbeat failures per folder. 3 strikes (~30s)
-  * before the folder is dropped, so a single GC pause, busy
-  * agent, or network blip doesn't unregister a live folder. */
-  private heartbeatFailures = new Map<string, number>();
+  /** Folders with a resync currently in flight (guards overlap). */
+  private resyncInFlight = new Set<string>();
 
   // -----------------------------------------------------------------------
   // Folder lifecycle
@@ -63,9 +61,12 @@ class SessionManager {
     // Idempotent re-registration. The launcher (bin/acp-spawn)
     // re-registers periodically so a Voir restart self-heals;
     // same endpoint means nothing to rebuild — just refresh the
-    // label and make sure the heartbeat is running.
+    // label, the liveness bookkeeping, and the heartbeat.
     if (existing && existing.agentUrl === opts.agentUrl) {
       if (opts.agentName !== undefined) existing.agentName = opts.agentName;
+      // A successful registration POST is itself proof of life.
+      existing.lastSeenAt = Date.now();
+      if (existing.status === "degraded") existing.status = "ok";
       this.startHeartbeat(path);
       return existing;
     }
@@ -91,6 +92,10 @@ class SessionManager {
       this.clients.set(path, client);
       existing.agentUrl = opts.agentUrl;
       if (opts.agentName !== undefined) existing.agentName = opts.agentName;
+      // client.start() completed the initialize handshake: the
+      // agent answered, so it is alive.
+      existing.lastSeenAt = Date.now();
+      existing.status = "ok";
       this.startHeartbeat(path);
       return existing;
     }
@@ -100,6 +105,8 @@ class SessionManager {
       agentUrl: opts.agentUrl,
       agentName: opts.agentName,
       registeredAt: Date.now(),
+      status: "ok",
+      lastSeenAt: Date.now(),
       sessions: new Map(),
       activeSessionId: null,
       availableCommands: [],
@@ -153,6 +160,13 @@ class SessionManager {
           this.handleInfoUpdate(path, si.sessionId, si.title);
         }
       }
+    });
+    // Transport reconnects: the SSE leg died and came back, so
+    // session/update notifications were missed while it was
+    // down. Rebuild the folder's session state from agent truth.
+    client.onReconnect(() => {
+      console.log(`[sessions] ${path}: agent stream reconnected, resyncing`);
+      void this.resyncFolder(path);
     });
   }
 
@@ -605,6 +619,14 @@ class SessionManager {
   }
 
   private broadcast(session: SessionState, msg: ChatMessage) {
+    // During a session/load replay the transcript is rebuilt
+    // wholesale; live tabs must not receive the replayed
+    // messages one by one — they'd double-append onto what they
+    // already show. They get the authoritative snapshot on their
+    // next stream connect instead: api.stream serves
+    // session.messages after the replay completes, and a resync
+    // control message asks live tabs to reconnect.
+    if (session.replaying) return;
     const set = this.listeners.get(session.id);
     if (!set) return;
     for (const l of set) {
@@ -682,6 +704,11 @@ class SessionManager {
 
   private handleSessionUpdate(sessionId: string, update: SessionUpdate) {
     const session = this.findSession(sessionId);
+    if (process.env.DEBUG) {
+      console.log(
+        `[acp] update ${update.sessionUpdate} for ${sessionId.slice(0, 8)} known=${!!session} replaying=${session?.replaying}`,
+      );
+    }
     if (!session) return;
     const id = cryptoRandom();
 
@@ -1009,15 +1036,105 @@ class SessionManager {
     return undefined;
   }
 
+  // -- Resync -----------------------------------------------------------
+
+  /**
+   * Reconcile a folder's in-memory session state with agent
+   * truth after a healing event: the SSE stream reconnected
+   * after a drop, or the heartbeat recovered from `degraded`.
+   * Every session/update pushed while the leg was down was lost,
+   * so each session we hold is replayed via session/load (the
+   * agent replays the full transcript). Replay broadcasts are
+   * suppressed (see broadcast); each session's live viewers are
+   * asked to reconnect and re-snapshot via a `resync` control
+   * message.
+   *
+   * Replays every held session, not just busy ones: a turn that
+   * ran during the outage settles its prompt RPC through the
+   * error path (POST failed too), which leaves busy=false on a
+   * transcript that is now missing the agent's reply. Stale
+   * state must never be served to a reconnecting viewer as a
+   * snapshot, and "not busy" is not proof of "unchanged".
+   */
+  private async resyncFolder(folder: string) {
+    const path = normalizeFolder(folder);
+    const state = this.folders.get(path);
+    const client = this.clients.get(path);
+    if (!state || !client) return;
+    if (this.resyncInFlight.has(path)) return;
+    this.resyncInFlight.add(path);
+    if (process.env.DEBUG)
+      console.log(`[resync] ${path}: start`);
+    try {
+      // Which sessions does the agent still know about?
+      let known: Set<string> | null = null;
+      try {
+        const list = await client.listSessions(state.path);
+        known = new Set(
+          list
+            .filter((e) => !e.cwd || e.cwd === state.path)
+            .map((e) => e.sessionId),
+        );
+      } catch (err) {
+        console.warn(
+          `[resync] ${path}: session/list failed: ${(err as Error).message}`,
+        );
+        return;
+      }
+      // loadSession has an activeSessionId side effect; keep the
+      // folder's notion of the active session stable across resync.
+      const prevActive = state.activeSessionId;
+      for (const session of Array.from(state.sessions.values())) {
+        // Someone else is already replaying this session (page
+        // load, prompt retry). Its state is being rebuilt; the
+        // viewer will snapshot after it completes.
+        if (session.replaying) continue;
+        // The agent lost this session (fresh agent process,
+        // cleared sessions dir). A pending prompt RPC, if any,
+        // will surface the error; don't replay what isn't there.
+        if (known && !known.has(session.id)) continue;
+        try {
+          if (process.env.DEBUG)
+            console.log(
+              `[resync] replay ${session.id.slice(0, 8)} (known=${known?.has(session.id)}) msgs-before=${session.messages.length}`,
+            );
+          await this.loadSession(state.path, session.id);
+          if (process.env.DEBUG)
+            console.log(
+              `[resync] replay done msgs-after=${session.messages.length} replaying=${session.replaying}`,
+            );
+          this.broadcast(session, this.controlMessage({ type: "resync" }));
+        } catch (err) {
+          console.warn(
+            `[resync] ${path}/${session.id}: replay failed: ${(err as Error).message}`,
+          );
+        }
+      }
+      state.activeSessionId = prevActive;
+    } finally {
+      this.resyncInFlight.delete(path);
+      if (process.env.DEBUG) console.log(`[resync] ${path}: done`);
+    }
+  }
+
   // -- Heartbeat ---------------------------------------------------------
 
+  /**
+   * Liveness probe of the agent leg. A failing ping does NOT
+   * unregister the folder: it flips the folder to `degraded`
+   * (kept in the UI, sessions and clients preserved) and keeps
+   * pinging forever. The launcher's periodic re-registration
+   * or a network recovery brings the endpoint back, and the
+   * recovery resyncs. The old three-strike unregister destroyed
+   * perfectly recoverable state over a 30-second blip.
+   */
   private startHeartbeat(folder: string) {
     // Idempotent: safe to call from every registration path.
     this.stopHeartbeat(folder);
-    this.heartbeatFailures.delete(folder);
     const tick = async () => {
+      const state = this.folders.get(folder);
       const client = this.clients.get(folder);
-      if (!client) return;
+      if (!state || !client) return;
       try {
         // Cap the ping so a hung bridge can't pile up concurrent
         // ticks. Anything that slow counts as a failure.
@@ -1026,20 +1143,20 @@ class SessionManager {
           sleep(HEARTBEAT_INTERVAL_MS).then(() => false),
         ]);
         if (!ok) throw new Error("ping failed");
-        this.heartbeatFailures.delete(folder);
+        state.lastSeenAt = Date.now();
+        if (state.status === "degraded") {
+          state.status = "ok";
+          console.log(`[heartbeat] ${folder} recovered`);
+          // The endpoint was unreachable: notifications were
+          // missed. Rebuild every session from agent truth.
+          void this.resyncFolder(folder);
+        }
       } catch (err) {
-        // 3 consecutive strikes (~30s) before we drop the folder.
-        // A single GC pause, busy agent, or network blip must not
-        // unregister a live folder — the launcher re-registers
-        // periodically, but we'd rather not churn the UI.
-        const n = (this.heartbeatFailures.get(folder) ?? 0) + 1;
-        this.heartbeatFailures.set(folder, n);
-        console.warn(
-          `[heartbeat] ${folder} failure ${n}/3: ${(err as Error).message}`,
-        );
-        if (n >= 3) {
-          console.warn(`[heartbeat] ${folder} unresponsive, dropping folder`);
-          await this.unregisterFolder(folder);
+        if (state.status !== "degraded") {
+          state.status = "degraded";
+          console.warn(
+            `[heartbeat] ${folder} degraded: ${(err as Error).message}`,
+          );
         }
       }
     };
@@ -1047,13 +1164,13 @@ class SessionManager {
       folder,
       setInterval(() => void tick(), HEARTBEAT_INTERVAL_MS),
     );
+    void tick(); // probe immediately on registration
   }
 
   private stopHeartbeat(folder: string) {
     const t = this.heartbeats.get(folder);
     if (t) clearInterval(t);
     this.heartbeats.delete(folder);
-    this.heartbeatFailures.delete(folder);
   }
 }
 
@@ -1108,6 +1225,17 @@ export interface FolderState {
   agentUrl: string;
   agentName?: string;
   registeredAt: number;
+  /**
+   * Liveness of the agent leg. `degraded` = heartbeat pings are
+   * failing; the folder is kept (sessions, clients, heartbeats)
+   * and keeps being probed — the launcher's periodic
+   * re-registration or a network recovery flips it back to ok,
+   * which triggers a resync. Never auto-removed; DELETE
+   * /api/folders is the only removal.
+   */
+  status: "ok" | "degraded";
+  /** Last time the agent answered a heartbeat ping (epoch ms). */
+  lastSeenAt: number;
   sessions: Map<string, SessionState>;
   activeSessionId: string | null;
   /**
@@ -1198,6 +1326,8 @@ export function folderSummary(state: FolderState): FolderSummary {
     agentName: state.agentName,
     agentUrl: state.agentUrl,
     registeredAt: state.registeredAt,
+    status: state.status,
+    lastSeenAt: state.lastSeenAt,
     sessions: Array.from(state.sessions.values())
       .sort((a, b) => b.createdAt - a.createdAt)
       .map(sessionSummary),

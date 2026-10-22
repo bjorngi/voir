@@ -1,14 +1,23 @@
 # Sandbox / fence integration
 
-Voir ships with a per-folder launcher, `bin/acp-spawn`, that
-spawns the agent in a worktree, exposes it as an ACP JSON-RPC 2.0
-HTTP endpoint, and registers it with Voir. The launcher is the
-official way to attach a worktree to a running Voir.
+Voir ships with two ways to run agents on a machine:
 
-The launcher itself does **not** sandbox the agent — that's your
-responsibility. Wrap the agent in `fence` / `bwrap` / `firejail` /
-namespace-tools however you like, then point the launcher at the
-wrapped command via `--agent`.
+- `bin/acp-spawn` — the per-folder launcher. One shot: spawn,
+  expose, register, die with the terminal. The official way to
+  attach a worktree to a running Voir by hand.
+- `bin/voir-supervisor` — the resident supervisor. Owns what
+  *should* be running on the machine, converges to it, and
+  restarts crashed agents. For standing folders that must
+  survive reboots.
+
+Both share the same bridge and registration core
+(`bin/acp-lib.mjs`); a supervised agent and a one-shot one are
+indistinguishable to Voir.
+
+Neither sandboxes the agent — that's your responsibility. Wrap
+the agent in `fence` / `bwrap` / `firejail` / namespace-tools
+however you like, then point the preset or `--agent` flag at the
+wrapped command.
 
 ## Basic usage
 
@@ -66,6 +75,62 @@ guess when a path hosts several:
 ```sh
 curl -X DELETE 'http://localhost:9000/api/folders?path=/abs&name=pi'
 ```
+
+## Resident supervisor
+
+`bin/voir-supervisor` keeps a fleet of agents alive on one
+machine. Two files, two owners:
+
+```jsonc
+// ~/.config/voir/supervisor.json  — authored by you, never written
+// by the supervisor. The preset commands are where sandboxes
+// live; raw commands never cross the API.
+{
+  "ui": "https://chat.lab",
+  "presets": {
+    "pi": "pi-acp",
+    "pi-fenced": "fence exec --private . -- pi-acp"
+  }
+}
+
+// ~/.local/state/voir/agents.json — managed by the supervisor:
+// desired state only (what SHOULD exist), written atomically on
+// every add/remove, watched for hand edits.
+[
+  { "dir": "/home/me/code/infra", "preset": "pi-fenced", "name": "infra" }
+]
+```
+
+Run `voir-supervisor` (default subcommand `run`) and it
+converges: every desired entry gets a child, a bridge and the
+30-second registration loop, so a Voir restart heals on its own.
+A crashed child is restarted with backoff (1s doubling to a 30s
+cap, reset after a minute of uptime); ten consecutive crashes
+mark the entry errored — it stays in the state file until a human
+fixes the preset or removes it. Absence is status, never a
+command to delete.
+
+Day-to-day:
+
+```sh
+voir-supervisor add ~/code/infra --preset pi-fenced   # launch + persist
+voir-supervisor ls                                     # fleet status
+voir-supervisor rm infra                               # stop + remove
+```
+
+`add`/`rm` talk to the running daemon (found via a discovery
+file next to the state file); if the daemon is down they edit
+the desired state directly and say so. The daemon's loopback API
+is also documented surface — `GET /agents`, `GET /presets`,
+`POST /agents { dir, preset, name? }`, `DELETE /agents/<name>`
+(default :7420, `apiToken` in the config enables bearer auth) —
+so a future UI launch flow can be a thin forward, with no new
+machinery in Voir.
+
+One-shot agents (`acp-spawn`) are invisible to the supervisor by
+design: scratch worktrees, comparisons and CI keep the old
+die-with-the-terminal behavior, and both kinds coexist in the
+same Voir.
 
 ## Programmatic use
 

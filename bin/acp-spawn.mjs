@@ -24,10 +24,15 @@
 //
 // Lifecycle: spawn → wait for ready → register → wait for SIGINT/SIGTERM
 //            → unregister → kill child → exit 0.
+//
+// The process plumbing lives in bin/acp-lib.mjs (shared with the
+// resident supervisor); this file is the one-shot policy: one
+// agent, one bridge, register, die with the terminal.
 
-import { spawn } from "node:child_process";
-import { createServer } from "node:http";
-import { Buffer } from "node:buffer";
+import {
+  launchAgent,
+  createRegistrar,
+} from "./acp-lib.mjs";
 
 // -----------------------------------------------------------------------
 // Args
@@ -107,6 +112,7 @@ Options:
                                         agent under a different name
                                         (e.g. a compose service name)]
   --no-register     don't talk to the UI (bridge only)
+  --sse-lifetime <ms>  test aid: end each SSE stream after <ms>
   -h, --help
 
 Environment (used as fallback for the corresponding flag):
@@ -123,294 +129,49 @@ const opts = parseArgs(process.argv.slice(2));
 const folder = process.cwd();
 
 // -----------------------------------------------------------------------
-// Find a free port (if not specified)
-// -----------------------------------------------------------------------
-async function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.listen(0, "127.0.0.1", () => {
-      const { port } = srv.address();
-      srv.close(() => resolve(port));
-    });
-    srv.on("error", reject);
-  });
-}
-
-const port = opts.port ?? (await findFreePort());
-// What the agentUrl looks like depends on whether the launcher and
-// the UI share a network namespace:
-//   - on-host: bind=127.0.0.1, no --url → agentUrl = http://127.0.0.1:<port>/
-//   - container: bind=0.0.0.0 + --url=http://<svc>:<port>/
-// Validate --url early so a typo doesn't surface as a 400 from
-// the UI on registration.
-let agentUrl;
-if (opts.url) {
-  try {
-    const u = new URL(opts.url);
-    if (u.protocol !== "http:" && u.protocol !== "https:") {
-      throw new Error(`unsupported protocol: ${u.protocol}`);
-    }
-    agentUrl = u.toString();
-    if (!agentUrl.endsWith("/")) agentUrl += "/";
-  } catch (err) {
-    console.error(`invalid --url: ${opts.url} (${err.message})`);
-    process.exit(2);
-  }
-} else {
-  agentUrl = `http://${opts.bind}:${port}/`;
-}
-
-// -----------------------------------------------------------------------
-// Spawn the agent
-// -----------------------------------------------------------------------
-// --agent is a command spec; we split on whitespace so callers can pass
-//   --agent pi-acp
-//   --agent "opencode acp"
-//   --agent "codex-acp --foo bar"
-// A single token is treated as just the command (no args). Paths that
-// contain spaces inside one argument aren't supported — wrap in a script.
-const agentSpec = opts.agent.trim().split(/\s+/).filter(Boolean);
-if (agentSpec.length === 0) {
-  console.error("--agent value is empty");
-  process.exit(2);
-}
-const [agentCmd, ...agentArgs] = agentSpec;
-
-const child = spawn(agentCmd, agentArgs, {
-  cwd: folder,
-  stdio: ["pipe", "pipe", "pipe"],
-  env: { ...process.env, ACP_FOLDER: folder },
-});
-child.stderr.on("data", (b) =>
-  process.stderr.write(`[${opts.agent}] ${b}`),
-);
-child.on("error", (err) => {
-  if (shuttingDown) return;
-  console.error(`[${opts.agent}] failed to start: ${err.message}`);
-  console.error(
-    `hint: is the agent on PATH? try \`command -v ${agentSpec[0]}\``,
-  );
-  shutdown(1);
-});
-child.on("exit", (code, signal) => {
-  if (shuttingDown) return;
-  console.error(
-    `[${opts.agent}] exited unexpectedly code=${code} signal=${signal}`,
-  );
-  shutdown(1);
-});
-
-// -----------------------------------------------------------------------
-// JSON-RPC framing on stdout → request responses + SSE notifications
-// -----------------------------------------------------------------------
-const pending = new Map();
-const sseClients = new Set();
-let stdoutBuf = "";
-child.stdout.on("data", (chunk) => {
-  stdoutBuf += chunk.toString();
-  let i;
-  while ((i = stdoutBuf.indexOf("\n")) !== -1) {
-    const line = stdoutBuf.slice(0, i).trim();
-    stdoutBuf = stdoutBuf.slice(i + 1);
-    if (!line) continue;
-    let msg;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (msg.id !== undefined && pending.has(msg.id)) {
-      const { resolve } = pending.get(msg.id);
-      pending.delete(msg.id);
-      resolve(msg);
-    } else if (msg.method) {
-      for (const sse of sseClients) {
-        try {
-          sse.write(`data: ${line}\n\n`);
-        } catch {}
-      }
-    }
-  }
-});
-
-// -----------------------------------------------------------------------
-// HTTP server: POST = JSON-RPC, GET = SSE
-// -----------------------------------------------------------------------
-const server = createServer(async (req, res) => {
-  try {
-    if (req.method === "POST") {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const body = JSON.parse(Buffer.concat(chunks).toString());
-      // Transport-level health probe. `ping` is not an ACP method —
-      // it's the heartbeat the UI sends every 10s. Answer it here
-      // instead of forwarding it into the agent: forwarded as a
-      // JSON-RPC notification it was fire-and-forget (204 came back
-      // regardless of the child's state), and agents that don't
-      // implement the method (pi-acp) logged -32601 spam on every
-      // heartbeat. Liveness here = bridge up AND child not exited.
-      if (body.method === "ping" && body.id === undefined) {
-        const alive = child.exitCode === null && !shuttingDown;
-        res.statusCode = alive ? 204 : 503;
-        res.end();
-        return;
-      }
-      if (body.id !== undefined) {
-        const id = body.id;
-        const p = new Promise((resolve) =>
-          pending.set(id, { resolve, ts: Date.now() }),
-        );
-        child.stdin.write(JSON.stringify(body) + "\n");
-        const reply = await Promise.race([
-          p,
-          new Promise((r) => setTimeout(() => r(null), 30_000)),
-        ]);
-        if (!reply) {
-          res.statusCode = 504;
-          res.end();
-          return;
-        }
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify(reply));
-      } else {
-        child.stdin.write(JSON.stringify(body) + "\n");
-        res.statusCode = 204;
-        res.end();
-      }
-    } else if (req.method === "GET") {
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.writeHead(200);
-      // Flush the response head immediately: Node buffers headers
-      // until the first write/end otherwise, so an SSE client's
-      // fetch (and thus its reconnect detection) wouldn't resolve
-      // until the agent happens to push its first notification.
-      // For a client that just reconnected after a drop, that can
-      // be a full keep-alive interval of dead time.
-      res.flushHeaders();
-      sseClients.add(res);
-      const ka = setInterval(() => {
-        try {
-          res.write(": ka\n\n");
-        } catch {}
-      }, 15_000);
-      // Test aid: forcibly end the stream after a lifetime,
-      // simulating a proxy timeout / network drop.
-      let lifetime = null;
-      if (opts.sseLifetime && opts.sseLifetime > 0) {
-        lifetime = setTimeout(() => {
-          try {
-            res.end();
-          } catch {}
-        }, opts.sseLifetime);
-      }
-      req.on("close", () => {
-        clearInterval(ka);
-        if (lifetime) clearTimeout(lifetime);
-        sseClients.delete(res);
-      });
-    } else {
-      res.statusCode = 405;
-      res.end();
-    }
-  } catch (err) {
-    res.statusCode = 500;
-    res.end(String(err));
-  }
-});
-
-server.listen(port, opts.bind, async () => {
-  console.log(`${opts.agent} bridge for ${folder} on ${agentUrl}`);
-
-  if (!opts.register) return;
-
-  // Register with the UI, then keep re-registering on an
-  // interval. The UI keeps all folder state in memory, so a UI
-  // restart (crash, deploy, `docker compose restart web`) would
-  // otherwise orphan a perfectly healthy agent+bridge: the
-  // registration is the only thing that went missing. Periodic
-  // re-registration makes that self-heal — Voir treats a POST for
-  // a known path as an idempotent refresh. Cheap enough to do
-  // every 30s for a single-user tool.
-  const REREGISTER_INTERVAL_MS = 30_000;
-  let registered = false;
-
-  const register = async () => {
-    const res = await fetch(`${opts.ui}/api/folders`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        path: folder,
-        agentUrl,
-        agentName: opts.name,
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`${res.status} ${text}`);
-    }
-    return res.json();
-  };
-
-  const announce = (body) => {
-    const browse = `${opts.ui.replace(/\/$/, "")}${body.browse}`;
-    console.log(`registered → browse: ${browse}`);
-  };
-
-  // Initial registration: retry until it lands rather than dying.
-  // If the UI is restarting, the bridge stays up and registers as
-  // soon as it's back; the agent keeps running either way.
-  for (;;) {
-    try {
-      announce(await register());
-      registered = true;
-      break;
-    } catch (err) {
-      if (shuttingDown) return;
-      console.error(
-        `failed to register with ${opts.ui} (${err.message}) — retrying in 10s`,
-      );
-      await new Promise((r) => setTimeout(r, 10_000));
-    }
-  }
-
-  setInterval(() => {
-    if (shuttingDown || !registered) return;
-    register()
-      .then(() => {
-        // Silent on success — re-registration is routine. Only
-        // report state transitions.
-        if (!registered) {
-          registered = true;
-          console.log(`re-registered with ${opts.ui}`);
-        }
-      })
-      .catch((err) => {
-        if (registered) {
-          registered = false;
-          console.error(
-            `lost registration with ${opts.ui} (${err.message}) — will retry`,
-          );
-        }
-      });
-  }, REREGISTER_INTERVAL_MS);
-});
-
-// -----------------------------------------------------------------------
-// Lifecycle
+// Launch + register
 // -----------------------------------------------------------------------
 let shuttingDown = false;
+let registrar = null;
+let agent = null;
+
 async function shutdown(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
-    const url = `${opts.ui}/api/folders?path=${encodeURIComponent(folder)}`;
-    await fetch(url, { method: "DELETE" });
+    registrar?.stop();
+    await registrar?.unregister();
   } catch {}
-  server.close();
-  child.kill("SIGTERM");
+  agent?.stop();
   setTimeout(() => process.exit(code), 200);
+}
+
+agent = await launchAgent({
+  spec: opts.agent,
+  cwd: folder,
+  bind: opts.bind,
+  port: opts.port,
+  url: opts.url,
+  sseLifetime: opts.sseLifetime,
+  label: opts.name,
+  onChildExit: (code, signal) => {
+    if (shuttingDown) return;
+    console.error(`[${opts.agent}] exited unexpectedly code=${code} signal=${signal}`);
+    shutdown(1);
+  },
+});
+
+console.log(`${opts.agent} bridge for ${folder} on ${agent.agentUrl}`);
+
+if (opts.register) {
+  registrar = createRegistrar({
+    ui: opts.ui,
+    folder,
+    agentUrl: agent.agentUrl,
+    agentName: opts.name,
+  });
+  await registrar.register();
+  registrar.keepRegistered();
 }
 
 for (const sig of ["SIGINT", "SIGTERM"]) {

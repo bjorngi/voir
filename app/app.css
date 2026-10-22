@@ -91,6 +91,12 @@ body {
   font-family: var(--font-sans);
   background: #0b0d10;
   color: #e6e8eb;
+  /* Installed-PWA (viewport-fit=cover) keeps the layout below
+     the iOS status-bar overlay. Zero in a normal browser tab. */
+  padding-top: env(safe-area-inset-top);
+  /* Don't let a rubber-band scroll or pull-to-refresh fight the
+     chat's own scroll container on mobile. */
+  overscroll-behavior: none;
 }
 
 

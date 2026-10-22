@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Voir — offline</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: flex; align-items: center; justify-content: center;
+      background: #0b0d10; color: #e6e8eb;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      -webkit-text-size-adjust: 100%;
+    }
+    .box { text-align: center; padding: 2rem; }
+    h1 { font-size: 1rem; font-weight: 600; margin: 0 0 .5rem; }
+    p { font-size: .8rem; color: #9ca3af; margin: 0 0 1.5rem; }
+    button {
+      border: 1px solid #3f3f46; background: transparent; color: #fff;
+      padding: .6rem 1.4rem; font: inherit; font-size: .8rem;
+      border-radius: 4px;
+    }
+    button:active { background: rgba(255, 255, 255, .1); }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Voir is offline</h1>
+    <p>The server isn't reachable right now.</p>
+    <button onclick="location.reload()">Retry</button>
+  </div>
+  <script>
+    // The service worker serves this page AT the original navigation
+    // URL, so a reload retries the original page (chat, changes,
+    // whatever it was) once the network is back.
+    addEventListener("online", () => location.reload());
+    // 'online' doesn't cover a server that restarted while the
+    // network stayed up, so also retry periodically while visible.
+    setInterval(() => {
+      if (!document.hidden) location.reload();
+    }, 15000);
+  </script>
+</body>
+</html>

@@ -16,6 +16,9 @@ export const links: Route.LinksFunction = () => [
     rel: "stylesheet",
     href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
   },
+  // PWA: the web app manifest + iOS home-screen icon.
+  { rel: "manifest", href: "/manifest.webmanifest" },
+  { rel: "apple-touch-icon", href: "/icons/apple-touch-icon.png" },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -23,13 +26,34 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <html lang="en" className="h-full">
       <head>
         <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {/* viewport-fit=cover + black-translucent below let the
+            installed PWA draw under the iOS status bar; the body
+            pads down with env(safe-area-inset-top) in app.css. */}
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
+        <meta name="theme-color" content="#0b0d10" />
+        {/* iOS standalone (Add to Home Screen) settings. */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Voir" />
         <Meta />
         <Links />
       </head>
       <body className="h-full overflow-hidden bg-neutral-950 text-neutral-100">
         {children}
         <Scripts />
+        {/* PWA: register the service worker once the page has
+            loaded. It only touches same-origin document
+            navigations (network-first + offline fallback); see
+            public/sw.js. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js'); }); }",
+          }}
+        />
       </body>
     </html>
   );

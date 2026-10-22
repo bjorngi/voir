@@ -209,8 +209,11 @@ platform speech stack:
 Voir is **not secured**. Out of the box it:
 
 - has **no authentication** on any endpoint,
-- binds the **dev server to `0.0.0.0`** (so `npm run dev` is reachable
-  on your LAN — fine in a container, not fine on a laptop),
+- binds the dev server to **loopback + your Tailscale interface**
+  (see `vite.config.ts` — `npm run dev` is reachable from the same
+  machine and from your tailnet, e.g. your phone; nothing is bound
+  on LAN/WAN interfaces. The docker compose dev setup overrides
+  this with `--host 0.0.0.0`, which is fine inside a container),
 - will **fetch any `agentUrl`** it's told to via `POST /api/folders`,
   which means an attacker who can reach the server can make it talk
   to internal services on your network.

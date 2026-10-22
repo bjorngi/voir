@@ -1,0 +1,23 @@
+[Unit]
+Description=Voir — web UI for ACP coding agents
+After=network-online.target
+Documentation=https://github.com/bjorngi/voir
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/voir
+Environment=PORT=10001
+Environment=NODE_ENV=production
+Environment=PATH=%h/.npm-global/bin:/home/bjorn/voir/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=npx tsx bin/server.ts
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+
+# The unit as deployed on devbox-1 (user-level systemd):
+#   systemctl --user enable --now voir
+# The server it starts (bin/server.ts) loads .env from
+# WorkingDirectory — the Deepgram keys live there, gitignored.
+# Requirements: npm install + npm run build in the checkout first.

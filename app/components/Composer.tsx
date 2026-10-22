@@ -532,7 +532,9 @@ export function Composer({
               aria-hidden="true"
               className={
                 "inline-block h-2 w-2 rounded-full bg-amber-400 " +
-                (committed || !holding ? "opacity-60" : "animate-pulse")
+                (committed || !holding || !mic.listening
+                  ? "opacity-60"
+                  : "animate-pulse")
               }
             />
             {committed
@@ -540,7 +542,9 @@ export function Composer({
                 ? "Mic ended — release"
                 : "Inserted ✓"
               : holding
-                ? "Listening — release to insert"
+                ? mic.listening
+                  ? "Listening — release to insert"
+                  : "Connecting mic…"
                 : "Transcribing…"}
             {mic.error && (
               <span className="ml-auto normal-case tracking-normal text-rose-400">

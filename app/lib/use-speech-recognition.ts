@@ -13,8 +13,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *
  * Continuous dictation: browsers end the recognition session
  * after a silence, so `onend` restarts it while the user hasn't
- * tapped the mic off. The restart needs a user gesture on iOS —
- * when it's denied, dictation simply ends (no error spam).
+ * tapped the mic off — immediately, and if start() fails
+ * (teardown races, transient recognizer errors, expired gesture
+ * activation) with retries against a small budget. Only a
+ * recognizer that stays dead through the budget ends the
+ * dictation early.
  */
 
 interface SRAlternative {
@@ -62,6 +65,20 @@ const FRIENDLY_ERRORS: Record<string, string> = {
   network: "Speech recognition network error — check your connection.",
 };
 
+// Continuous-dictation restart budget: when a session ends on
+// silence while the user is still holding, a fresh session is
+// attempted immediately, then retried with this delay until the
+// budget is spent. ~1.5s total — long enough to ride out a
+// session teardown race or a transient recognizer hiccup, short
+// enough that a genuinely dead mic surfaces "Mic ended" quickly.
+const RESTART_ATTEMPTS = 6;
+const RESTART_DELAY_MS = 250;
+// A session that dies within this window after onstart counts
+// against the restart budget instead of resetting it — prevents
+// hot start/stop loops when a recognizer "starts" but instantly
+// expires.
+const INSTANT_DEATH_MS = 1_000;
+
 export function useSpeechRecognition(opts: {
   /** Interim (not yet final) transcript of the current utterance. */
   onInterim: (text: string) => void;
@@ -96,6 +113,37 @@ export function useSpeechRecognition(opts: {
     stoppedRef.current = true;
     optsRef.current.onStop?.();
   }, []);
+
+  // Restart machinery for continuous dictation (see onend): a
+  // fresh session is attempted immediately; if start() throws
+  // (InvalidStateError while the old session tears down, expired
+  // user-gesture activation on iOS, …) we retry with a small
+  // delay until the budget is spent — only then is the mic
+  // declared dead. Refs only; all guards run at fire time so a
+  // pending retry can never resurrect a released dictation.
+  const restartAttemptsRef = useRef(0);
+  const lastStartAtRef = useRef(0);
+  const scheduleRestart = useCallback((): void => {
+    if (!wantRef.current || stoppedRef.current) return;
+    restartAttemptsRef.current += 1;
+    if (restartAttemptsRef.current >= RESTART_ATTEMPTS) {
+      // Genuinely dead (permission, quota, expired gesture…).
+      wantRef.current = false;
+      fireOnStop();
+      return;
+    }
+    setTimeout(attemptRestart, RESTART_DELAY_MS);
+  }, [fireOnStop]);
+  const attemptRestart = useCallback((): void => {
+    const rec = recRef.current;
+    if (!rec || !wantRef.current || stoppedRef.current) return;
+    try {
+      rec.start();
+      // Success: onstart fires, resets the budget.
+    } catch {
+      scheduleRestart();
+    }
+  }, [scheduleRestart]);
   // True between user taps (want to listen) vs. the recognition
   // session actually running (may flap as restarts occur).
   const wantRef = useRef(false);
@@ -123,6 +171,12 @@ export function useSpeechRecognition(opts: {
     rec.onstart = () => {
       setListening(true);
       activeRef.current = true;
+      // A new session is genuinely running: reset the restart
+      // budget and clear any stale error from a session that
+      // recovered (e.g. a transient "network" dropout).
+      restartAttemptsRef.current = 0;
+      lastStartAtRef.current = Date.now();
+      setError(null);
       // Per-session bookkeeping: result indexes of finals already
       // appended (see onresult). Resets on every (re)start, since
       // a new recognition session starts its results array over.
@@ -131,19 +185,24 @@ export function useSpeechRecognition(opts: {
     rec.onend = () => {
       setListening(false);
       activeRef.current = false;
-      if (wantRef.current) {
-        try {
-          rec.start();
-        } catch {
-          // Restart without a user gesture (iOS) — end quietly.
-          wantRef.current = false;
-          fireOnStop();
-        }
-      } else {
+      if (!wantRef.current || stoppedRef.current) {
         // Stopped for good (or never started). Any final flushed
         // by stop() has been delivered by now — see the ordering
         // note in onStop's doc comment.
         fireOnStop();
+        return;
+      }
+      // Still wanted (finger still holding): the session ended on
+      // a silence — restart to keep the dictation going. If the
+      // session died suspiciously fast (a start() that
+      // "succeeded" but expired instantly, a hot start/stop
+      // cycle), don't hammer the recognizer: delay the retry and
+      // let it count against the restart budget so a genuinely
+      // broken recognizer gives up instead of flashing the mic.
+      if (Date.now() - lastStartAtRef.current < INSTANT_DEATH_MS) {
+        scheduleRestart();
+      } else {
+        attemptRestart();
       }
     };
     rec.onresult = (e) => {
@@ -172,9 +231,14 @@ export function useSpeechRecognition(opts: {
       // failures — the onend restart (if wanted) covers them.
       if (e.error === "no-speech" || e.error === "aborted") return;
       setError(FRIENDLY_ERRORS[e.error] ?? `Speech error: ${e.error}`);
+      // "network" is usually a transient recognizer-backend hiccup
+      // (mobile recognizers are server-side): surface the error
+      // but keep the session alive — the onend restart machinery
+      // retries with a budget, and recovering clears the error.
+      if (e.error === "network") return;
+      // Permission/hardware errors are not retryable — end now
+      // (some browsers never reach onend after these).
       wantRef.current = false;
-      // Some fatal error paths never reach onend — don't leave the
-      // caller's UI hanging in a listening state.
       fireOnStop();
     };
     recRef.current = rec;

@@ -231,8 +231,12 @@ platform speech stack:
   the hold does nothing and the button stays press-to-send) **and
   a secure context** — over the tailnet that means the
   `tailscale serve` HTTPS URL, not plain HTTP (see above).
-  Long silences don't end the session while you keep holding;
-  release (or an incoming call) commits what was said so far.
+  Long silences don't end the session while you keep holding —
+  when the recognizer ends one anyway (browsers do), it is
+  restarted automatically, with retries riding out transient
+  dropouts; only a mic that stays dead through the retry budget
+  ends early ("Mic ended — release"). Release (or an incoming
+  call) commits what was said so far.
 - **Spoken replies (text → speech):** the **"Read aloud"** button
   in the chat header — that's the speaker icon's label and its
   whole job: when on, agent text messages are narrated as they

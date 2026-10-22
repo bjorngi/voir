@@ -221,7 +221,8 @@ platform speech stack:
   button** (hold ≥ ~250ms; works with the Queue button during a
   turn too). A live-transcription popup opens over the composer
   while you talk — the on-screen keyboard collapses while
-  dictating and comes back on release, ready to edit. After a
+  dictating — the on-screen keyboard stays out of the way until
+  you tap the field yourself. After a
   brief "Transcribing…" flush the transcript lands in the
   composer as a reviewable draft — never auto-sent, since
   recognition makes mistakes and an agent turn is expensive. A

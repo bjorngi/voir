@@ -184,8 +184,8 @@ export function Composer({
       // flushed by stop() has been delivered by now; commit finals
       // plus whatever interim never finalized (e.g. "aborted").
       // NOTE: this can fire while the finger is still down (dead
-      // session). It only commits — the popup hand-over and the
-      // focus/keyboard happen after release, in the effect below.
+      // session). It only commits — the popup hand-over happens
+      // after release, in the effect below. Never focuses.
       const transcript = appendFinal(finalRef.current, interimRef.current).trim();
       finalRef.current = "";
       interimRef.current = "";
@@ -197,9 +197,11 @@ export function Composer({
   });
 
   // Hand-over: transcript committed AND finger up → linger a
-  // beat while the popup animates into the input, then close it,
-  // flash the textarea, and focus it for editing (this is the
-  // only place the keyboard comes back — never mid-hold).
+  // beat while the popup animates into the input, then close it
+  // and flash the textarea. The input is deliberately NOT
+  // focused — no keyboard until the user taps the field
+  // themselves; dictating shouldn't dictate where the keyboard
+  // goes.
   useEffect(() => {
     if (!committed || holding) return;
     setLingering(true);
@@ -209,7 +211,6 @@ export function Composer({
       setCommitted(false);
       setLastTranscript("");
       setFlash(true);
-      ref.current?.focus();
       setTimeout(() => setFlash(false), 600);
     }, 250);
     return () => clearTimeout(t);
@@ -235,8 +236,9 @@ export function Composer({
     setDictating(true);
     // Collapse the on-screen keyboard — the dictation popup owns
     // the screen while you talk, and there's no reason the
-    // keyboard should eat half of it. Focus (and the keyboard)
-    // come back on hand-over, ready to edit the transcript.
+    // keyboard should eat half of it. It stays collapsed after
+    // the hand-over too; the user taps the field when they want
+    // to edit.
     ref.current?.blur();
     mic.start();
   };

@@ -129,7 +129,29 @@ acp-spawn --agent codex-acp --name codex --ui http://localhost:9000
 `Ctrl-C` the launcher. The folder disappears from Voir, the agent
 subprocess is killed, the bridge port is freed. If you `kill -9` the
 launcher, Voir's heartbeat will notice the endpoint is gone and drop
-the folder within ~10 seconds.
+the folder within ~30 seconds (the heartbeat tolerates a couple
+of transient failures before dropping a folder).
+
+## Connection resilience
+
+The chat view holds one SSE connection per session, and it is
+designed to survive everything a phone can throw at it:
+
+- **Dropped connections reconnect automatically** — exponential
+  backoff from 1s to a 15s cap, forever. Reconnecting replays
+  the transcript from the server, so nothing is lost.
+- **Backgrounding the app** (iOS/Android killing the socket
+  while the tab is hidden) is detected on the next
+  `visibilitychange` and reconnects immediately.
+- **Half-open sockets** (mobile NAT reaping the TCP connection
+  without telling the browser) are caught by a watchdog: if
+  nothing — not even a keep-alive ping — arrives for 45s, the
+  connection is rebuilt.
+- **Voir restarting** doesn't orphan anything. The launcher
+  re-registers its folder every 30s, an open stream rehydrates
+  an unknown session from the agent, and the chat shows a small
+  banner ("Agent offline — retrying…") until it's back — no
+  page refresh needed, ever.
 
 ## Sandbox the agent
 

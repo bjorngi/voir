@@ -288,8 +288,18 @@ server.listen(port, opts.bind, async () => {
 
   if (!opts.register) return;
 
-  // Register with the UI
-  try {
+  // Register with the UI, then keep re-registering on an
+  // interval. The UI keeps all folder state in memory, so a UI
+  // restart (crash, deploy, `docker compose restart web`) would
+  // otherwise orphan a perfectly healthy agent+bridge: the
+  // registration is the only thing that went missing. Periodic
+  // re-registration makes that self-heal — Voir treats a POST for
+  // a known path as an idempotent refresh. Cheap enough to do
+  // every 30s for a single-user tool.
+  const REREGISTER_INTERVAL_MS = 30_000;
+  let registered = false;
+
+  const register = async () => {
     const res = await fetch(`${opts.ui}/api/folders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -303,13 +313,51 @@ server.listen(port, opts.bind, async () => {
       const text = await res.text();
       throw new Error(`${res.status} ${text}`);
     }
-    const body = await res.json();
+    return res.json();
+  };
+
+  const announce = (body) => {
     const browse = `${opts.ui.replace(/\/$/, "")}${body.browse}`;
     console.log(`registered → browse: ${browse}`);
-  } catch (err) {
-    console.error(`failed to register: ${err.message}`);
-    shutdown(1);
+  };
+
+  // Initial registration: retry until it lands rather than dying.
+  // If the UI is restarting, the bridge stays up and registers as
+  // soon as it's back; the agent keeps running either way.
+  for (;;) {
+    try {
+      announce(await register());
+      registered = true;
+      break;
+    } catch (err) {
+      if (shuttingDown) return;
+      console.error(
+        `failed to register with ${opts.ui} (${err.message}) — retrying in 10s`,
+      );
+      await new Promise((r) => setTimeout(r, 10_000));
+    }
   }
+
+  setInterval(() => {
+    if (shuttingDown || !registered) return;
+    register()
+      .then(() => {
+        // Silent on success — re-registration is routine. Only
+        // report state transitions.
+        if (!registered) {
+          registered = true;
+          console.log(`re-registered with ${opts.ui}`);
+        }
+      })
+      .catch((err) => {
+        if (registered) {
+          registered = false;
+          console.error(
+            `lost registration with ${opts.ui} (${err.message}) — will retry`,
+          );
+        }
+      });
+  }, REREGISTER_INTERVAL_MS);
 });
 
 // -----------------------------------------------------------------------

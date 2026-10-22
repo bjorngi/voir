@@ -4,7 +4,7 @@
  * updates from the agent and to dispatch user actions
  * (send / cancel / set_model / set_mode).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatLoaderData } from "~/routes/chat";
 import type {
   AvailableModel,
@@ -64,15 +64,76 @@ export function ChatView({ data }: { data: ChatData }) {
     data.currentModeId ?? null,
   );
   const [commands, setCommands] = useState(data.availableCommands ?? []);
+  // Connection health of the SSE stream. `connected` is true once
+  // the server has sent `ready` for the current connection;
+  // `connReason` carries the last `fatal` message from the server
+  // ("Agent offline…") while we keep retrying. The banner above the
+  // composer renders from these.
+  const [connected, setConnected] = useState(false);
+  const [connReason, setConnReason] = useState<string | null>(null);
   const visible = usePageVisible();
   const scrollRef = useAutoScroll<HTMLDivElement>([messages, visible]);
 
+  // Live-update stream. The server replays the current transcript
+  // as `snapshot` events, then `ready`, then live `message` events —
+  // the snapshot wholesale-replaces our state, so reconnecting at
+  // any time is safe. That matters because mobile browsers kill
+  // SSE sockets constantly (backgrounding, WiFi↔cellular handoff,
+  // NAT timeouts) and the connection must survive all of it:
+  //
+  //   - on error we close and retry with exponential backoff
+  //     (1s → 15s cap, with jitter), forever — the agent may be
+  //     gone now and come back when its launcher re-registers;
+  //   - on visibilitychange/online we retry immediately, because
+  //     a backgrounded tab on iOS can lose the socket without an
+  //     `error` event ever firing;
+  //   - a watchdog force-reconnects if nothing (not even a
+  //     keep-alive `ping`) has arrived for 45s, which catches
+  //     half-open sockets the browser hasn't noticed are dead;
+  //   - a `fatal` event from the server is informational (it says
+  //     *why* the stream can't be served); we keep retrying.
+  const everConnected = useRef(false);
   useEffect(() => {
     let es: EventSource | null = null;
     let cancelled = false;
+    let attempts = 0;
+    let connecting = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastActivity = Date.now();
+
+    const clearTimer = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const markAlive = () => {
+      lastActivity = Date.now();
+    };
+
+    const scheduleReconnect = () => {
+      if (cancelled || connecting || timer !== null) return;
+      const backoff = Math.min(15_000, 1000 * 2 ** Math.min(attempts, 4));
+      attempts += 1;
+      timer = setTimeout(() => {
+        timer = null;
+        connect();
+      }, backoff + Math.random() * 300);
+    };
+
     const connect = () => {
-      if (cancelled) return;
-      es = new EventSource(streamUrl(folder.path, initial.id));
+      if (cancelled || connecting) return;
+      connecting = true;
+      clearTimer();
+      es?.close();
+      es = null;
+      setConnected(false);
+      setConnReason(null);
+      markAlive();
+
+      const sock = new EventSource(streamUrl(folder.path, initial.id));
+      es = sock;
 
       // The server replays the current transcript as `snapshot`
       // events, then a `ready` event, then live updates as
@@ -84,19 +145,26 @@ export function ChatView({ data }: { data: ChatData }) {
       let live: ChatMessage[] = [];
       let isLive = false;
 
-      es.addEventListener("snapshot", (e) => {
+      sock.addEventListener("snapshot", (e) => {
+        markAlive();
         try {
           const msg = JSON.parse((e as MessageEvent).data) as ChatMessage;
           snapshot.push(msg);
         } catch {}
       });
 
-      es.addEventListener("ready", (e) => {
+      sock.addEventListener("ready", (e) => {
+        markAlive();
+        connecting = false;
+        everConnected.current = true;
+        attempts = 0;
+        setConnected(true);
+        setConnReason(null);
         try {
-          const data = JSON.parse((e as MessageEvent).data) as {
+          const d = JSON.parse((e as MessageEvent).data) as {
             busy: boolean;
           };
-          setBusy(data.busy);
+          setBusy(d.busy);
         } catch {}
         // Authoritative state from the server replaces whatever
         // we had (SSR'd or stale). Then drain any live events
@@ -109,7 +177,8 @@ export function ChatView({ data }: { data: ChatData }) {
         snapshot = [];
       });
 
-      es.addEventListener("message", (e) => {
+      sock.addEventListener("message", (e) => {
+        markAlive();
         try {
           const msg = JSON.parse((e as MessageEvent).data) as ChatMessage;
           // Out-of-band control messages from the server (typed
@@ -148,14 +217,85 @@ export function ChatView({ data }: { data: ChatData }) {
         } catch {}
       });
 
-      es.addEventListener("error", () => {
-        es?.close();
+      // Server keep-alive: just liveness evidence for the
+      // watchdog below (and it confirms the connection is
+      // really open, not silently half-dead).
+      sock.addEventListener("ping", markAlive);
+
+      // The server couldn't serve this stream (folder not
+      // registered, session unknown to the agent). Informational
+      // only: the server ends the stream right after, the error
+      // handler schedules the retry, and whatever went wrong may
+      // fix itself (launcher re-registers, Voir restarts, the
+      // agent comes back).
+      sock.addEventListener("fatal", (e) => {
+        markAlive();
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as {
+            message?: string;
+          };
+          setConnReason(d.message ?? "Disconnected — retrying…");
+        } catch {
+          setConnReason("Disconnected — retrying…");
+        }
+      });
+
+      sock.addEventListener("error", () => {
+        if (cancelled || es !== sock) return;
+        connecting = false;
+        sock.close();
         es = null;
+        setConnected(false);
+        scheduleReconnect();
       });
     };
+
+    // Half-open-socket watchdog: mobile NATs can reap the TCP
+    // connection without the browser ever firing `error`. If
+    // nothing at all has arrived for 45s (the server pings every
+    // 15s), the connection is dead from our side — force a
+    // reconnect. Only relevant while we believe we're connected;
+    // the retry path has its own timer.
+    const watchdog = setInterval(() => {
+      if (cancelled || es === null) return;
+      if (Date.now() - lastActivity > 45_000) {
+        connecting = false;
+        es.close();
+        es = null;
+        setConnected(false);
+        scheduleReconnect();
+      }
+    }, 10_000);
+
+    // Coming back to the foreground (or regaining network): the
+    // socket may have died while hidden without an error event —
+    // iOS suspends the page and reaps its connections. If we're
+    // not connected, reconnect right away instead of waiting out
+    // the backoff timer (which was likely suspended mid-count).
+    const onWake = () => {
+      if (cancelled || document.hidden) return;
+      if (!es) {
+        // Forgive most of the backoff after a long absence; the
+        // endpoint is probably fine and the phone just slept.
+        attempts = Math.min(attempts, 2);
+        connect();
+      }
+    };
+    const onOnline = () => {
+      if (cancelled || document.hidden) return;
+      attempts = 0;
+      if (!es) connect();
+    };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("online", onOnline);
+
     connect();
     return () => {
       cancelled = true;
+      clearTimer();
+      clearInterval(watchdog);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("online", onOnline);
       es?.close();
     };
   }, [folder.path, initial.id]);
@@ -175,6 +315,12 @@ export function ChatView({ data }: { data: ChatData }) {
         </div>
         {busy && <WorkingBorder />}
       </div>
+      {!connected && (
+        <ConnectionBanner
+          firstTime={!everConnected.current}
+          reason={connReason}
+        />
+      )}
       {/*
         The model/mode drawer is always mounted (when the
         agent has advertised at least one of model or mode)
@@ -288,6 +434,33 @@ function apply(
     }
   }
   return [...prev, data];
+}
+
+// -----------------------------------------------------------------------
+// ConnectionBanner — shown while the SSE stream is not connected.
+// The client keeps retrying with backoff (see the effect above), so
+// this is reassurance, not an error the user has to act on. Never
+// blocks the composer: messages sent while disconnected queue on
+// the server as usual, and the transcript catches up on reconnect.
+// -----------------------------------------------------------------------
+
+function ConnectionBanner({
+  firstTime,
+  reason,
+}: {
+  firstTime: boolean;
+  reason: string | null;
+}) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="shrink-0 border-t border-neutral-800 bg-neutral-900/70 px-3 py-1.5 font-mono text-[11px] text-neutral-400"
+    >
+      {reason ??
+        (firstTime ? "Connecting…" : "Connection lost — reconnecting…")}
+    </div>
+  );
 }
 
 // -----------------------------------------------------------------------

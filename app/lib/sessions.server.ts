@@ -43,6 +43,10 @@ class SessionManager {
   private listeners = new Map<string, Set<SessionListener>>();
   private turnWaiters = new Map<string, TurnWaiter>();
   private heartbeats = new Map<string, NodeJS.Timeout>();
+  /** Consecutive heartbeat failures per folder. 3 strikes (~30s)
+  * before the folder is dropped, so a single GC pause, busy
+  * agent, or network blip doesn't unregister a live folder. */
+  private heartbeatFailures = new Map<string, number>();
 
   // -----------------------------------------------------------------------
   // Folder lifecycle
@@ -54,14 +58,69 @@ class SessionManager {
     agentName?: string;
   }): Promise<FolderState> {
     const path = normalizeFolder(opts.path);
-    if (this.folders.has(path)) {
-      throw new Error(`Folder already registered: ${path}`);
+    const existing = this.folders.get(path);
+
+    // Idempotent re-registration. The launcher (bin/acp-spawn)
+    // re-registers periodically so a Voir restart self-heals;
+    // same endpoint means nothing to rebuild — just refresh the
+    // label and make sure the heartbeat is running.
+    if (existing && existing.agentUrl === opts.agentUrl) {
+      if (opts.agentName !== undefined) existing.agentName = opts.agentName;
+      this.startHeartbeat(path);
+      return existing;
     }
 
+    // New folder, or the same folder under a new agentUrl (the
+    // launcher restarted and picked a new port): build a fresh
+    // client. Sessions are kept — the agent persists them on
+    // disk and the session ids survive launcher restarts.
     const client = new AcpClient({
       label: opts.agentName ?? path,
       transport: () => new HttpJsonRpcTransport(opts.agentUrl),
     });
+    this.attachClientNotifications(path, client);
+    await client.start();
+
+    if (existing) {
+      const old = this.clients.get(path);
+      if (old) {
+        try {
+          await old.stop();
+        } catch {}
+      }
+      this.clients.set(path, client);
+      existing.agentUrl = opts.agentUrl;
+      if (opts.agentName !== undefined) existing.agentName = opts.agentName;
+      this.startHeartbeat(path);
+      return existing;
+    }
+
+    const state: FolderState = {
+      path,
+      agentUrl: opts.agentUrl,
+      agentName: opts.agentName,
+      registeredAt: Date.now(),
+      sessions: new Map(),
+      activeSessionId: null,
+      availableCommands: [],
+      availableModels: [],
+      availableModes: [],
+      currentModeId: null,
+      currentModelId: null,
+    };
+    this.folders.set(path, state);
+    this.clients.set(path, client);
+
+    this.startHeartbeat(path);
+    return state;
+  }
+
+  /**
+   * Wire a client's JSON-RPC notifications into the session
+   * manager's dispatch. Shared by the new-folder and
+   * re-registration paths in registerFolder.
+   */
+  private attachClientNotifications(path: string, client: AcpClient) {
     client.onNotification((method, params) => {
       const p = params as { sessionId?: string; update?: SessionUpdate } | undefined;
       // All session-scoped notifications from pi-acp arrive
@@ -95,27 +154,6 @@ class SessionManager {
         }
       }
     });
-
-    await client.start();
-
-    const state: FolderState = {
-      path,
-      agentUrl: opts.agentUrl,
-      agentName: opts.agentName,
-      registeredAt: Date.now(),
-      sessions: new Map(),
-      activeSessionId: null,
-      availableCommands: [],
-      availableModels: [],
-      availableModes: [],
-      currentModeId: null,
-      currentModelId: null,
-    };
-    this.folders.set(path, state);
-    this.clients.set(path, client);
-
-    this.startHeartbeat(path);
-    return state;
   }
 
   async unregisterFolder(folder: string): Promise<void> {
@@ -209,6 +247,15 @@ class SessionManager {
     const replayDone = new Promise<void>((resolve) => {
       session.replayDoneResolver = resolve;
     });
+    // Insert the session into the folder's map BEFORE issuing the
+    // RPC. The agent replays the transcript as session/update
+    // notifications while we wait here, and the dispatcher drops
+    // updates for session ids it can't find. On the page-load path
+    // a listSessions stub is usually already in the map, so this
+    // went unnoticed; the SSE stream's rehydration path (no prior
+    // listSessions) needs the session registered up front.
+    state.sessions.set(sessionId, session);
+    state.activeSessionId = sessionId;
     try {
       const res = await client.loadSession(sessionId, state.path);
       this.applySessionCapabilities(state, res);
@@ -227,8 +274,6 @@ class SessionManager {
     ]);
     session.replaying = false;
     session.replayDoneResolver = undefined;
-    state.sessions.set(sessionId, session);
-    state.activeSessionId = sessionId;
     return session;
   }
 
@@ -956,18 +1001,35 @@ class SessionManager {
   // -- Heartbeat ---------------------------------------------------------
 
   private startHeartbeat(folder: string) {
+    // Idempotent: safe to call from every registration path.
+    this.stopHeartbeat(folder);
+    this.heartbeatFailures.delete(folder);
     const tick = async () => {
       const client = this.clients.get(folder);
       if (!client) return;
       try {
-        const ok = await client.ping();
-        if (!ok) {
-          console.warn(`[heartbeat] ${folder} ping failed, dropping folder`);
+        // Cap the ping so a hung bridge can't pile up concurrent
+        // ticks. Anything that slow counts as a failure.
+        const ok = await Promise.race([
+          client.ping(),
+          sleep(HEARTBEAT_INTERVAL_MS).then(() => false),
+        ]);
+        if (!ok) throw new Error("ping failed");
+        this.heartbeatFailures.delete(folder);
+      } catch (err) {
+        // 3 consecutive strikes (~30s) before we drop the folder.
+        // A single GC pause, busy agent, or network blip must not
+        // unregister a live folder — the launcher re-registers
+        // periodically, but we'd rather not churn the UI.
+        const n = (this.heartbeatFailures.get(folder) ?? 0) + 1;
+        this.heartbeatFailures.set(folder, n);
+        console.warn(
+          `[heartbeat] ${folder} failure ${n}/3: ${(err as Error).message}`,
+        );
+        if (n >= 3) {
+          console.warn(`[heartbeat] ${folder} unresponsive, dropping folder`);
           await this.unregisterFolder(folder);
         }
-      } catch (err) {
-        console.warn(`[heartbeat] ${folder} error: ${(err as Error).message}`);
-        await this.unregisterFolder(folder);
       }
     };
     this.heartbeats.set(
@@ -980,6 +1042,7 @@ class SessionManager {
     const t = this.heartbeats.get(folder);
     if (t) clearInterval(t);
     this.heartbeats.delete(folder);
+    this.heartbeatFailures.delete(folder);
   }
 }
 

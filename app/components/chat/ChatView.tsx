@@ -12,6 +12,7 @@ import type {
   ChatMessage,
 } from "~/lib/chat-types";
 import { streamUrl, sessionUrl } from "~/lib/urls";
+import { nextNarrationChunk } from "~/lib/narration";
 import { useAutoScroll, usePageVisible } from "~/lib/hooks";
 import type { Tts } from "~/lib/use-tts";
 import { useVoiceMode } from "~/lib/use-voice";
@@ -429,16 +430,22 @@ export function ChatView({
     for (const m of messages) {
       if (m.role !== "agent" || m.kind !== "text") continue;
       const text = m.text ?? "";
-      const spoken = spokenChars.current.get(m.id) ?? 0;
-      if (text.length <= spoken) continue;
-      if (m.streaming) {
-        // Mid-turn: speak only up to the last completed sentence.
-        // The rest arrives in chunks; speaking partials sounds
-        // broken. The remainder is flushed when streaming ends.
-        const cut = sentenceEnd(text.slice(spoken));
-        if (cut > 0) {
-          spokenChars.current.set(m.id, spoken + cut);
-          tts.speak(text.slice(spoken, spoken + cut).trim(), {
+      // Markdown-aware extraction (app/lib/narration.ts): fenced
+      // code blocks are skipped outright — reading "backtick
+      // backtick backtick" and code bytes aloud was the complaint —
+      // and prose chunks arrive stripped of formatting (headings,
+      // bullets, bold, link URLs, inline-code backticks…). Empty
+      // chunks mean "only skipped code" — keep draining.
+      let spoken = spokenChars.current.get(m.id) ?? 0;
+      while (spoken < text.length) {
+        const chunk = nextNarrationChunk(text, spoken, {
+          final: !m.streaming,
+        });
+        if (!chunk) break;
+        spoken = chunk.spoken;
+        spokenChars.current.set(m.id, spoken);
+        if (chunk.text) {
+          tts.speak(chunk.text, {
             // Voice mode narrates per the panel's Narrate setting
             // and with the picker's voice; Read aloud uses the
             // default voice and the global toggle.
@@ -447,13 +454,6 @@ export function ChatView({
             speed: voicePrefs.ttsSpeed,
           });
         }
-      } else {
-        spokenChars.current.set(m.id, text.length);
-        tts.speak(text.slice(spoken).trim(), {
-          force: voice.active && voicePrefs.narrate,
-          voice: voicePrefs.ttsVoice ?? undefined,
-          speed: voicePrefs.ttsSpeed,
-        });
       }
     }
   }, [messages, tts, voice.active, voicePrefs.narrate, voicePrefs.ttsVoice, voicePrefs.ttsSpeed]);
@@ -565,17 +565,6 @@ export function ChatView({
   );
 }
 
-/**
- * Length of the longest prefix of `s` that ends on a completed
- * sentence (up to and including the last ".", "?", "!" or "…"
- * that is followed by whitespace or end-of-string). 0 when no
- * sentence boundary exists yet. Used by the TTS narrating to
- * avoid speaking half-finished sentences mid-stream.
- */
-function sentenceEnd(s: string): number {
-  const m = /^[\s\S]*[.!?…](?=\s|$)/.exec(s);
-  return m ? m[0].length : 0;
-}
 
 /**
  * Dispatch a session-scoped action via the dedicated

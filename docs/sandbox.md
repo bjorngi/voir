@@ -52,8 +52,20 @@ acp-spawn --agent pi-acp --name pi --ui http://localhost:9000 --port 8101
 acp-spawn --agent 'other-acp' --name other --ui http://localhost:9000 --port 8102
 ```
 
-Both folders show up in Voir, both bound to the same path, but
-their session threads are independent.
+Both show up in Voir under the same path with independent
+session threads, heartbeats and reconnects. Sessions resolve to
+their owning agent by session id, so the chat URLs are
+unchanged. Folder-level calls that can't tell the agents apart
+(creating a chat from the folder view) pick the most recently
+registered agent; the registration API accepts an explicit
+`agentName` when you care.
+
+Tear down one agent with `?name=`; a bare `DELETE` refuses to
+guess when a path hosts several:
+
+```sh
+curl -X DELETE 'http://localhost:9000/api/folders?path=/abs&name=pi'
+```
 
 ## Programmatic use
 
@@ -66,8 +78,9 @@ Content-Type: application/json
 { "path": "/abs", "agentUrl": "http://127.0.0.1:8123/", "agentName": "pi" }
 → 201 { ... "browse": "/f/<path>" }
 
-DELETE /api/folders?path=/abs
-→ 204
+DELETE /api/folders?path=/abs             → 204 (one agent on the path)
+DELETE /api/folders?path=/abs&name=pi    → 204 (picks that agent;
+                                            required when several share it)
 
 GET /api/folders
 → { folders: [ ... ] }

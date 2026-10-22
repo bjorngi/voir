@@ -43,11 +43,13 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const p = parseRoute(params["*"], url.searchParams.get("view"));
   const states = sessionManager.listFolders();
-  // Pre-populate each folder's session list so the folders
+  // Pre-populate every path's session list so the folders
   // view and the folder-scoping check below both see up-to-
-  // date sessions. The per-folder work is independent, so we
-  // fan out in parallel.
-  await Promise.all(states.map((s) => sessionManager.listSessions(s.path)));
+  // date sessions. Paths can host several agents (same
+  // worktree, different engines); listSessions merges their
+  // session lists per path, so dedupe first.
+  const paths = [...new Set(states.map((s) => s.path))];
+  await Promise.all(paths.map((p) => sessionManager.listSessions(p)));
   // Cheap per-folder diff summaries for the root view's
   // `+N -M` tag. The git invocations don't depend on each
   // other and they're all <100ms for typical worktrees.
@@ -65,28 +67,50 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     diffSummary: summaryByPath.get(s.path),
   }));
 
+  // A path can host several agents (same worktree, different
+  // engines/sandboxes). The sidebar and folder views group by
+  // path — one row per worktree, session lists merged, agent
+  // names joined for the badge. Resolution of which agent owns
+  // a given session happens by session id in findOrLoadSession.
+  const byPath = new Map<string, FolderSummary>();
+  for (const f of folders) {
+    const existing = byPath.get(f.path);
+    if (!existing) {
+      byPath.set(f.path, { ...f });
+      continue;
+    }
+    existing.sessions = [...existing.sessions, ...f.sessions].sort(
+      (a, b) => b.createdAt - a.createdAt,
+    );
+    const names = [
+      ...new Set([existing.agentName, f.agentName].filter(Boolean) as string[]),
+    ];
+    existing.agentName = names.length > 0 ? names.join(" · ") : undefined;
+  }
+  const grouped = Array.from(byPath.values());
+
   if (p.k === "folders") {
     return {
       k: "folders" as const,
-      tree: folders.map((folder) => ({ folder, sessions: folder.sessions })),
-      folders,
+      tree: grouped.map((folder) => ({ folder, sessions: folder.sessions })),
+      folders: grouped,
     };
   }
 
-  const folder = folders.find((f) => f.path === p.folder);
+  const folder = grouped.find((f) => f.path === p.folder);
   if (!folder) {
     // Unknown folder: fall through to the root tree view so
     // the user sees a useful page (their other folders)
     // instead of a 404.
     return {
       k: "folders" as const,
-      tree: folders.map((f) => ({ folder: f, sessions: f.sessions })),
-      folders,
+      tree: grouped.map((f) => ({ folder: f, sessions: f.sessions })),
+      folders: grouped,
     };
   }
 
   if (p.k === "sessions") {
-    return { k: "sessions" as const, folders, folder, sessions: folder.sessions };
+    return { k: "sessions" as const, folders: grouped, folder, sessions: folder.sessions };
   }
 
   if (p.k === "changes") {
@@ -97,7 +121,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     ]);
     return {
       k: "changes" as const,
-      folders,
+      folders: grouped,
       folder,
       fromSessionId: p.sessionId,
       diff: result,
@@ -111,7 +135,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     // file contents are fetched client-side.
     return {
       k: "files" as const,
-      folders,
+      folders: grouped,
       folder,
       fromSessionId: p.sessionId,
       files: await listFiles(p.folder),
@@ -119,35 +143,20 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   }
 
   // chat
-  const state = sessionManager.getFolder(p.folder);
-  if (!state) {
-    return { k: "sessions" as const, folders, folder, sessions: folder.sessions };
+  // Resolve the (path, sessionId) pair to its agent. Handles the
+  // in-memory case, replays empty stubs, and probes each agent
+  // under the path for sessions voir doesn't know yet.
+  const found = await sessionManager.findOrLoadSession(
+    p.folder,
+    p.sessionId,
+  );
+  if (!found) {
+    return redirectToFreshOrSessions(p.folder, grouped, folder);
   }
-  let session = state.sessions.get(p.sessionId);
-  if (!session) {
-    // Unknown sessionId: try to load it (handles pre-restart
-    // sessions and bookmarked URLs). If the agent doesn't
-    // recognize the ID, create a fresh session and redirect.
-    try {
-      session = await sessionManager.loadSession(p.folder, p.sessionId);
-    } catch {
-      return redirectToFreshOrSessions(p.folder, folders, folder);
-    }
-  } else if (session.messages.length === 0) {
-    // The session exists in our in-memory map (typically
-    // hydrated from the agent's session/list at folder view
-    // time) but has no transcript yet. Replay history by
-    // reloading.
-    try {
-      session = await sessionManager.loadSession(p.folder, p.sessionId);
-    } catch {
-      // Agent lost the session; treat as unknown and redirect.
-      return redirectToFreshOrSessions(p.folder, folders, folder);
-    }
-  }
+  const { state, session } = found;
   return {
     k: "chat" as const,
-    folders,
+    folders: grouped,
     folder,
     session: {
       id: session.id,

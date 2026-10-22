@@ -91,7 +91,14 @@ export function Picker({
                     (isActive ? "text-neutral-100" : "text-neutral-300")
                   }
                 >
-                  <span className="truncate font-mono">{shortPath(f.path)}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-mono">{shortPath(f.path)}</span>
+                    {f.agentName && (
+                      <span className="shrink-0 rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[11px] text-neutral-500">
+                        {f.agentName}
+                      </span>
+                    )}
+                  </span>
                   <span className="text-xs text-neutral-600">{isOpen ? "−" : "+"}</span>
                 </button>
                 {isOpen && (

@@ -63,6 +63,7 @@ export async function action({ request }: Route.ActionArgs) {
     title?: unknown;
     from?: unknown;
     notify?: unknown;
+    agent?: unknown;
   };
   try {
     body = await request.json();
@@ -72,6 +73,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   const folder = typeof body.folder === "string" ? body.folder : null;
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : null;
+  const agent = typeof body.agent === "string" && body.agent.trim() ? body.agent.trim() : undefined;
   if (!folder || !prompt) {
     return Response.json(
       { error: "Both 'folder' and 'prompt' are required" },
@@ -84,10 +86,23 @@ export async function action({ request }: Route.ActionArgs) {
       ? (body.notify as NotifyMode)
       : "on-settle";
 
-  const state = sessionManager.getFolder(folder);
+  // Optional "agent" disambiguates when a path hosts several
+  // agents (same worktree, different engines/sandboxes); without
+  // it, a unique agent resolves, and an ambiguous path 404s
+  // with the registered names listed.
+  const state = sessionManager.getFolder(folder, agent);
   if (!state) {
+    const agents = sessionManager
+      .listFolders()
+      .filter((f) => f.path === folder)
+      .map((f) => f.agentName ?? "default")
+      .join(", ");
     return Response.json(
-      { error: `Unknown folder ${folder}. Register it first (POST /api/folders).` },
+      {
+        error: agents
+          ? `Path hosts several agents (${agents}); pass "agent" to pick one`
+          : `Unknown folder ${folder}. Register it first (POST /api/folders).`,
+      },
       { status: 404 },
     );
   }
@@ -97,7 +112,11 @@ export async function action({ request }: Route.ActionArgs) {
 
   // Create the session and seed the first user turn. The origin
   // marker makes provenance visible to both the user and pi.
-  const session = await sessionManager.createSession(state.path, title);
+  const session = await sessionManager.createSession(
+    state.path,
+    title,
+    agent,
+  );
   const text = from ? `[from: ${from}] ${prompt}` : prompt;
   sessionManager.sendMessage(state.path, session.id, [{ type: "text", text }]);
 

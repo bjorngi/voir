@@ -15,10 +15,14 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   if (!folder) {
     return Response.json({ error: "Missing ?folder=" }, { status: 400 });
   }
-  const state = sessionManager.getFolder(folder);
-  if (!state) {
-    return Response.json({ error: "Unknown folder" }, { status: 404 });
+  // Resolve the (folder, sessionId) pair to its owning agent — a
+  // path can host several, and the metadata below (models, modes,
+  // commands) is per-agent.
+  const found = await sessionManager.findOrLoadSession(folder, sessionId);
+  if (!found) {
+    return Response.json({ error: "Unknown folder/session" }, { status: 404 });
   }
+  const state = found.state;
   return {
     sessionId,
     commands: state.availableCommands,

@@ -52,6 +52,14 @@ export function FolderTree({
         >
           <span className="font-mono">{shortPath(folder.path)}</span>
         </a>
+        {folder.agentName && (
+          <span
+            title={`Agent${folder.agentName.includes(" · ") ? "s" : ""}: ${folder.agentName}`}
+            className="mr-2 shrink-0 select-none rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[11px] text-neutral-400"
+          >
+            {folder.agentName}
+          </span>
+        )}
         {folder.status === "degraded" && (
           <span
             title={`Agent offline — last seen ${new Date(folder.lastSeenAt).toLocaleTimeString()}`}

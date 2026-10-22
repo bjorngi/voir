@@ -36,31 +36,17 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     return new Response("Missing ?folder=", { status: 400 });
   }
 
-  const state = sessionManager.getFolder(folder);
-  let session = state?.sessions.get(sessionId);
-
-  // Folder known but session isn't — typically a Voir restart with
-  // the browser tab still open (the in-memory session map was
-  // wiped, but the agent still has the session on disk). Replay it
-  // back into memory so the snapshot below serves the full
-  // transcript and the client reconnects without a page refresh.
-  if (state && !session) {
-    try {
-      session = await sessionManager.loadSession(folder, sessionId);
-    } catch {
-      // The agent doesn't know this session (or the load failed).
-      // Fall through to the fatal response below; the client keeps
-      // retrying, so a transient agent failure self-heals.
-    }
-  }
-
-  if (!state || !session) {
+  // Resolve the (folder, sessionId) pair to its agent: in-memory
+  // fast path, replay of empty stubs, or a probe across every
+  // agent registered under the folder path (Voir restart, open
+  // tab, bookmarked URL).
+  const found = await sessionManager.findOrLoadSession(folder, sessionId);
+  if (!found) {
     return fatalStream(
-      state
-        ? "Session not found on the agent — retrying…"
-        : "Agent offline — waiting for it to register — retrying…",
+      "Session not found on any agent under this folder — retrying…",
     );
   }
+  const session = found.session;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

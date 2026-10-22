@@ -32,12 +32,20 @@ import type {
  *
  * Everything agent → UI is fanned out as `ChatMessage`s over SSE.
  * Everything UI → agent goes through normal session/ methods.
+ *
+ * Registry model: agents are keyed by path + name (the launcher's
+ * `--name`). Several agents can share one path — same worktree,
+ * different engines or sandboxes — each with independent
+ * sessions, clients, heartbeats and resyncs. Session ids are
+ * UUIDs, so a (path, sessionId) pair resolves to its owning
+ * agent even when the URL doesn't name it.
  */
 
 const HEARTBEAT_TIMEOUT_MS = 60_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
 class SessionManager {
+  /** Keyed by agentKey(path, name) — one entry per agent. */
   private folders = new Map<string, FolderState>();
   private clients = new Map<string, AcpClient>();
   private listeners = new Map<string, Set<SessionListener>>();
@@ -56,22 +64,23 @@ class SessionManager {
     agentName?: string;
   }): Promise<FolderState> {
     const path = normalizeFolder(opts.path);
-    const existing = this.folders.get(path);
+    const key = agentKey(path, opts.agentName);
+    const existing = this.folders.get(key);
 
     // Idempotent re-registration. The launcher (bin/acp-spawn)
     // re-registers periodically so a Voir restart self-heals;
-    // same endpoint means nothing to rebuild — just refresh the
-    // label, the liveness bookkeeping, and the heartbeat.
+    // same agent (path+name), same endpoint → nothing to rebuild,
+    // just refresh the liveness bookkeeping and the heartbeat.
     if (existing && existing.agentUrl === opts.agentUrl) {
       if (opts.agentName !== undefined) existing.agentName = opts.agentName;
       // A successful registration POST is itself proof of life.
       existing.lastSeenAt = Date.now();
       if (existing.status === "degraded") existing.status = "ok";
-      this.startHeartbeat(path);
+      this.startHeartbeat(key);
       return existing;
     }
 
-    // New folder, or the same folder under a new agentUrl (the
+    // New agent, or the same agent under a new agentUrl (the
     // launcher restarted and picked a new port): build a fresh
     // client. Sessions are kept — the agent persists them on
     // disk and the session ids survive launcher restarts.
@@ -79,24 +88,24 @@ class SessionManager {
       label: opts.agentName ?? path,
       transport: () => new HttpJsonRpcTransport(opts.agentUrl),
     });
-    this.attachClientNotifications(path, client);
+    this.attachClientNotifications(key, client);
     await client.start();
 
     if (existing) {
-      const old = this.clients.get(path);
+      const old = this.clients.get(key);
       if (old) {
         try {
           await old.stop();
         } catch {}
       }
-      this.clients.set(path, client);
+      this.clients.set(key, client);
       existing.agentUrl = opts.agentUrl;
       if (opts.agentName !== undefined) existing.agentName = opts.agentName;
       // client.start() completed the initialize handshake: the
       // agent answered, so it is alive.
       existing.lastSeenAt = Date.now();
       existing.status = "ok";
-      this.startHeartbeat(path);
+      this.startHeartbeat(key);
       return existing;
     }
 
@@ -115,19 +124,19 @@ class SessionManager {
       currentModeId: null,
       currentModelId: null,
     };
-    this.folders.set(path, state);
-    this.clients.set(path, client);
+    this.folders.set(key, state);
+    this.clients.set(key, client);
 
-    this.startHeartbeat(path);
+    this.startHeartbeat(key);
     return state;
   }
 
   /**
    * Wire a client's JSON-RPC notifications into the session
-   * manager's dispatch. Shared by the new-folder and
+   * manager's dispatch. Shared by the new-agent and
    * re-registration paths in registerFolder.
    */
-  private attachClientNotifications(path: string, client: AcpClient) {
+  private attachClientNotifications(key: string, client: AcpClient) {
     client.onNotification((method, params) => {
       const p = params as { sessionId?: string; update?: SessionUpdate } | undefined;
       // All session-scoped notifications from pi-acp arrive
@@ -145,41 +154,72 @@ class SessionManager {
       // practice; keep the explicit matchers as a defensive
       // fallback in case an agent publishes a top-level
       // notification that doesn't go through session/update.
+      // They update THIS agent's state (the key identifies it),
+      // not every agent under the path.
+      const state = this.folders.get(key);
+      if (!state) return;
       if (method === "current_mode_update") {
         const modeId = (params as { currentModeId: string }).currentModeId;
-        if (typeof modeId === "string") this.handleModeUpdate(path, modeId);
+        if (typeof modeId === "string") this.handleModeUpdate(state, modeId);
       } else if (method === "current_model_update") {
         const modelId = (params as { currentModelId: string }).currentModelId;
-        if (typeof modelId === "string") this.handleModelUpdate(path, modelId);
+        if (typeof modelId === "string") this.handleModelUpdate(state, modelId);
       } else if (method === "available_commands_update") {
         const cmds = (params as { availableCommands: SlashCommand[] }).availableCommands;
-        if (Array.isArray(cmds)) this.handleCommandsUpdate(path, cmds);
+        if (Array.isArray(cmds)) this.handleCommandsUpdate(state, cmds);
       } else if (method === "session_info_update") {
         const si = params as { sessionId: string; title?: string };
         if (typeof si.sessionId === "string") {
-          this.handleInfoUpdate(path, si.sessionId, si.title);
+          this.handleInfoUpdate(state, si.sessionId, si.title);
         }
       }
     });
     // Transport reconnects: the SSE leg died and came back, so
     // session/update notifications were missed while it was
-    // down. Rebuild the folder's session state from agent truth.
+    // down. Rebuild this agent's session state from agent truth.
     client.onReconnect(() => {
-      console.log(`[sessions] ${path}: agent stream reconnected, resyncing`);
-      void this.resyncFolder(path);
+      const state = this.folders.get(key);
+      if (!state) return;
+      console.log(
+        `[sessions] ${state.path} (${identityOf(state)}): agent stream reconnected, resyncing`,
+      );
+      void this.resyncFolder(state);
     });
   }
 
-  async unregisterFolder(folder: string): Promise<void> {
+  async unregisterFolder(folder: string, name?: string): Promise<void> {
     const path = normalizeFolder(folder);
-    const client = this.clients.get(path);
+    const agents = this.agentsUnder(path);
+    if (agents.length === 0) return; // idempotent DELETE
+
+    // Pick the target: named → that agent; unnamed → the unique
+    // agent, or the unnamed default; ambiguous paths must name
+    // their agent explicitly rather than guess.
+    let target: FolderState | undefined;
+    if (name !== undefined) {
+      target = agents.find((s) => identityOf(s) === name);
+    } else if (agents.length === 1) {
+      target = agents[0];
+    } else {
+      target = agents.find((s) => identityOf(s) === DEFAULT_AGENT);
+    }
+    if (!target) {
+      throw new Error(
+        `Path ${path} hosts several agents (${agents
+          .map((s) => identityOf(s))
+          .join(", ")}); DELETE with ?name=<agent> to pick one`,
+      );
+    }
+
+    const key = agentKey(path, target.agentName);
+    const client = this.clients.get(key);
     if (client) {
       await client.stop();
-      this.clients.delete(path);
+      this.clients.delete(key);
     }
-    this.stopHeartbeat(path);
+    this.stopHeartbeat(key);
 
-    const state = this.folders.get(path);
+    const state = this.folders.get(key);
     if (state) {
       for (const sessionId of state.sessions.keys()) {
         const listeners = this.listeners.get(sessionId);
@@ -199,7 +239,7 @@ class SessionManager {
         this.listeners.delete(sessionId);
       }
     }
-    this.folders.delete(path);
+    this.folders.delete(key);
   }
 
   listFolders(): FolderState[] {
@@ -208,17 +248,121 @@ class SessionManager {
     );
   }
 
-  getFolder(folder: string): FolderState | undefined {
-    return this.folders.get(normalizeFolder(folder));
+  /**
+   * All agent states registered under a path, newest first. The
+   * common case is exactly one; a worktree can host several.
+   */
+  private agentsUnder(folder: string): FolderState[] {
+    const path = normalizeFolder(folder);
+    return this.listFolders().filter((s) => s.path === path);
+  }
+
+  /**
+   * The agent state that holds this session id, if any. Session
+   * ids are UUIDs, so (path, sessionId) resolves to at most one
+   * agent even when several share the path.
+   */
+  private sessionAgent(folder: string, sessionId: string): FolderState | undefined {
+    return this.agentsUnder(folder).find((s) => s.sessions.has(sessionId));
+  }
+
+  /**
+   * Resolve an agent for folder-scoped operations (create, load).
+   * Exact name if given; else the unique agent under the path;
+   * else the most recently registered — the documented pick for
+   * "new chat" on a multi-agent path until the UI grows per-agent
+   * buttons.
+   */
+  private resolveAgent(folder: string, name?: string): FolderState {
+    const agents = this.agentsUnder(folder);
+    if (agents.length === 0) {
+      throw new Error(
+        `Unknown folder ${folder}. Register it first (POST /api/folders).`,
+      );
+    }
+    if (name !== undefined) {
+      const s = agents.find((a) => identityOf(a) === name);
+      if (!s) throw new Error(`Unknown agent ${name} on ${folder}`);
+      return s;
+    }
+    return agents[0];
+  }
+
+  /**
+   * Resolve a (path, sessionId) pair to its agent and session,
+   * loading from the agent when voir doesn't hold it in memory
+   * (Voir restart, bookmarked URL). Tries each agent under the
+   * path in turn — an agent that doesn't know the session is
+   * skipped, not an error. Returns undefined when no agent knows
+   * the session.
+   */
+  async findOrLoadSession(
+    folder: string,
+    sessionId: string,
+    name?: string,
+  ): Promise<{ state: FolderState; session: SessionState } | undefined> {
+    // 1. In memory: an agent under this path holds the session.
+    const holder = this.sessionAgent(folder, sessionId);
+    if (holder) {
+      const existing = holder.sessions.get(sessionId)!;
+      if (existing.messages.length > 0 || existing.replaying) {
+        return { state: holder, session: existing };
+      }
+      // An empty stub (hydrated from the agent's session/list):
+      // replay the transcript from agent truth.
+      return {
+        state: holder,
+        session: await this.loadSession(holder.path, sessionId, identityOf(holder)),
+      };
+    }
+    // 2. Unknown here. Ask each agent under the path in turn;
+    //    `name` (when present) narrows the candidates first.
+    const candidates =
+      name !== undefined
+        ? this.agentsUnder(folder).filter((s) => identityOf(s) === name)
+        : this.agentsUnder(folder);
+    for (const state of candidates) {
+      try {
+        const session = await this.loadSession(
+          state.path,
+          sessionId,
+          identityOf(state),
+        );
+        return { state, session };
+      } catch {
+        // This agent doesn't know the session. loadSession left
+        // an empty stub behind; drop it so the agent's session
+        // list doesn't show ghosts, and try the next agent.
+        state.sessions.delete(sessionId);
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Look up an agent state. With a name: the exact agent.
+   * Without: the unique agent under the path, or undefined when
+   * the path is unknown or ambiguous (use listFolders/agentsUnder
+   * to enumerate, or findOrLoadSession for session-scoped work).
+   */
+  getFolder(folder: string, name?: string): FolderState | undefined {
+    const path = normalizeFolder(folder);
+    if (name !== undefined) return this.folders.get(agentKey(path, name));
+    const agents = this.agentsUnder(path);
+    return agents.length === 1 ? agents[0] : undefined;
   }
 
   // -----------------------------------------------------------------------
   // Session lifecycle
   // -----------------------------------------------------------------------
 
-  async createSession(folder: string, title?: string): Promise<SessionState> {
-    const state = this.requireFolder(folder);
-    const client = this.requireClient(state.path);
+  async createSession(
+    folder: string,
+    title?: string,
+    name?: string,
+  ): Promise<SessionState> {
+    const state = this.resolveAgent(folder, name);
+    const client = this.requireClient(state);
     // The agent returns the sessionId plus the initial
     // models/modes advertisements. The model/mode lists are
     // session-scoped in ACP, but pi-acp advertises the same
@@ -242,9 +386,13 @@ class SessionManager {
     return session;
   }
 
-  async loadSession(folder: string, sessionId: string): Promise<SessionState> {
-    const state = this.requireFolder(folder);
-    const client = this.requireClient(state.path);
+  async loadSession(
+    folder: string,
+    sessionId: string,
+    name?: string,
+  ): Promise<SessionState> {
+    const state = this.resolveAgent(folder, name);
+    const client = this.requireClient(state);
     const existing = state.sessions.get(sessionId);
     const session: SessionState = existing ?? {
       id: sessionId,
@@ -294,9 +442,10 @@ class SessionManager {
   async resumeSession(
     folder: string,
     sessionId: string,
+    name?: string,
   ): Promise<SessionState> {
-    const state = this.requireFolder(folder);
-    const client = this.requireClient(state.path);
+    const state = this.resolveAgent(folder, name);
+    const client = this.requireClient(state);
     await client.resumeSession(sessionId, state.path);
     const existing = state.sessions.get(sessionId);
     const session: SessionState = existing ?? {
@@ -313,37 +462,53 @@ class SessionManager {
   }
 
   /**
-   * Hydrate this folder's session list from the agent. The agent
-   * filters by cwd on its side (pi-acp's session/list takes a cwd
-   * param), but we also filter again here as a belt-and-braces check
-   * for agents that ignore it — otherwise a session from another
-   * worktree would leak into this folder's list.
+   * Hydrate the session list for a path. With a name: that
+   * agent's sessions. Without: the union across every agent
+   * under the path (the folder view lists them all). The agent
+   * filters by cwd on its side (pi-acp's session/list takes a
+   * cwd param), but we also filter again here as a
+   * belt-and-braces check for agents that ignore it — otherwise
+   * a session from another worktree would leak into the list.
    */
-  async listSessions(folder: string): Promise<SessionState[]> {
-    const state = this.requireFolder(folder);
-    const client = this.requireClient(state.path);
-    const list = await client.listSessions(state.path);
-    for (const entry of list) {
-      if (!entry.sessionId) continue;
-      if (entry.cwd && entry.cwd !== state.path) continue;
-      const existing = state.sessions.get(entry.sessionId);
-      if (!existing) {
-        state.sessions.set(entry.sessionId, {
-          id: entry.sessionId,
-          title: entry.title,
-          createdAt: Date.parse(entry.updatedAt ?? "") || Date.now(),
-          messages: [],
-          busy: false,
-        });
+  async listSessions(folder: string, name?: string): Promise<SessionState[]> {
+    const agents =
+      name !== undefined
+        ? [this.resolveAgent(folder, name)]
+        : this.agentsUnder(folder);
+    if (agents.length === 0) {
+      throw new Error(
+        `Unknown folder ${folder}. Register it first (POST /api/folders).`,
+      );
+    }
+    const merged = new Map<string, SessionState>();
+    for (const state of agents) {
+      const client = this.requireClient(state);
+      const list = await client.listSessions(state.path);
+      for (const entry of list) {
+        if (!entry.sessionId) continue;
+        if (entry.cwd && entry.cwd !== state.path) continue;
+        const existing = state.sessions.get(entry.sessionId);
+        if (!existing) {
+          state.sessions.set(entry.sessionId, {
+            id: entry.sessionId,
+            title: entry.title,
+            createdAt: Date.parse(entry.updatedAt ?? "") || Date.now(),
+            messages: [],
+            busy: false,
+          });
+        }
+      }
+      for (const session of state.sessions.values()) {
+        merged.set(session.id, session);
       }
     }
-    return Array.from(state.sessions.values()).sort(
+    return Array.from(merged.values()).sort(
       (a, b) => b.createdAt - a.createdAt,
     );
   }
 
   getSession(folder: string, sessionId: string): SessionState | undefined {
-    return this.getFolder(folder)?.sessions.get(sessionId);
+    return this.sessionAgent(folder, sessionId)?.sessions.get(sessionId);
   }
 
   subscribe(sessionId: string, listener: SessionListener) {
@@ -372,7 +537,7 @@ class SessionManager {
     sessionId: string,
     content: ContentBlock[],
   ): Promise<void> {
-    const state = this.getFolder(folder);
+    const state = this.sessionAgent(folder, sessionId);
     const session = state?.sessions.get(sessionId);
     if (!state || !session) throw new Error("Unknown folder/session");
 
@@ -434,7 +599,7 @@ class SessionManager {
     session: SessionState,
     content: ContentBlock[],
   ): Promise<void> {
-    const client = this.requireClient(state.path);
+    const client = this.requireClient(state);
     const turnDone = this.waitForTurnEnd(session.id);
     try {
       // If the agent has forgotten this sessionId (e.g. the bridge
@@ -513,7 +678,8 @@ class SessionManager {
   }
 
   cancel(folder: string, sessionId: string) {
-    const client = this.clients.get(normalizeFolder(folder));
+    const state = this.sessionAgent(folder, sessionId);
+    const client = state ? this.requireClient(state) : undefined;
     if (client) client.cancel(sessionId);
   }
 
@@ -527,8 +693,9 @@ class SessionManager {
     sessionId: string,
     modeId: string,
   ): Promise<unknown> {
-    const state = this.requireFolder(folder);
-    const client = this.requireClient(state.path);
+    const state = this.sessionAgent(folder, sessionId);
+    if (!state) throw new Error(`Unknown session ${sessionId}`);
+    const client = this.requireClient(state);
     const res = await client.setMode(sessionId, modeId);
     // Optimistic: if the agent doesn't push a follow-up
     // current_mode_update, mirror the value locally so the UI
@@ -550,8 +717,9 @@ class SessionManager {
     sessionId: string,
     modelId: string,
   ): Promise<unknown> {
-    const state = this.requireFolder(folder);
-    const client = this.requireClient(state.path);
+    const state = this.sessionAgent(folder, sessionId);
+    if (!state) throw new Error(`Unknown session ${sessionId}`);
+    const client = this.requireClient(state);
     const res = await client.unstableSetSessionModel(sessionId, modelId);
     // Optimistic: see setMode.
     state.currentModelId = modelId;
@@ -602,19 +770,9 @@ class SessionManager {
     }
   }
 
-  private requireFolder(folder: string): FolderState {
-    const state = this.folders.get(normalizeFolder(folder));
-    if (!state) {
-      throw new Error(
-        `Unknown folder ${folder}. Register it first (POST /api/folders).`,
-      );
-    }
-    return state;
-  }
-
-  private requireClient(folder: string): AcpClient {
-    const client = this.clients.get(folder);
-    if (!client) throw new Error(`No ACP client for ${folder}.`);
+  private requireClient(state: FolderState): AcpClient {
+    const client = this.clients.get(agentKey(state.path, state.agentName));
+    if (!client) throw new Error(`No ACP client for ${state.path} (${identityOf(state)}).`);
     return client;
   }
 
@@ -739,25 +897,25 @@ class SessionManager {
         update.sessionUpdate === "current_model_update" &&
         typeof u.currentModelId === "string"
       ) {
-        this.handleModelUpdate(folder.path, u.currentModelId);
+        this.handleModelUpdate(folder, u.currentModelId);
         return;
       }
       if (
         update.sessionUpdate === "current_mode_update" &&
         typeof u.currentModeId === "string"
       ) {
-        this.handleModeUpdate(folder.path, u.currentModeId);
+        this.handleModeUpdate(folder, u.currentModeId);
         return;
       }
       if (
         update.sessionUpdate === "available_commands_update" &&
         Array.isArray(u.availableCommands)
       ) {
-        this.handleCommandsUpdate(folder.path, u.availableCommands);
+        this.handleCommandsUpdate(folder, u.availableCommands);
         return;
       }
       if (update.sessionUpdate === "session_info_update") {
-        this.handleInfoUpdate(folder.path, sessionId, u.title);
+        this.handleInfoUpdate(folder, sessionId, u.title);
         // pi-acp publishes `session_info_update` with
         // `_meta.piAcp.queueDepth` whenever the queue depth
         // changes (a prompt was queued, a queued prompt was
@@ -770,7 +928,7 @@ class SessionManager {
           u as { _meta?: { piAcp?: { queueDepth?: number } } }
         )._meta?.piAcp?.queueDepth;
         if (typeof qDepth === "number") {
-          this.handleQueueUpdate(folder.path, sessionId, qDepth);
+          this.handleQueueUpdate(folder, sessionId, qDepth);
         }
         return;
       }
@@ -922,30 +1080,24 @@ class SessionManager {
     this.broadcast(session, last);
   }
 
-  private handleModeUpdate(folder: string, modeId: string) {
-    const state = this.folders.get(folder);
-    if (!state) return;
+  private handleModeUpdate(state: FolderState, modeId: string) {
     state.currentModeId = modeId;
-    // Broadcast on every session in the folder
+    // Broadcast on every session of this agent
     for (const session of state.sessions.values()) {
       this.broadcast(session, this.controlMessage({ type: "currentMode", modeId }));
     }
   }
 
-  private handleModelUpdate(folder: string, modelId: string) {
-    const state = this.folders.get(folder);
-    if (!state) return;
+  private handleModelUpdate(state: FolderState, modelId: string) {
     state.currentModelId = modelId;
     for (const session of state.sessions.values()) {
       this.broadcast(session, this.controlMessage({ type: "currentModel", modelId }));
     }
   }
 
-  private handleCommandsUpdate(folder: string, commands: SlashCommand[]) {
-    const state = this.folders.get(folder);
-    if (!state) return;
+  private handleCommandsUpdate(state: FolderState, commands: SlashCommand[]) {
     state.availableCommands = commands ?? [];
-    // The command list is the same across sessions in the folder
+    // The command list is the same across sessions of this agent
     // (pi-acp advertises the same list for every new session), so
     // broadcasting to all of them is cheap.
     for (const session of state.sessions.values()) {
@@ -960,13 +1112,12 @@ class SessionManager {
   }
 
   private handleInfoUpdate(
-    folder: string,
+    state: FolderState,
     sessionId: string,
     title: string | undefined,
   ) {
-    const state = this.folders.get(folder);
-    const session = state?.sessions.get(sessionId);
-    if (state && session && title) {
+    const session = state.sessions.get(sessionId);
+    if (session && title) {
       session.title = title;
     }
   }
@@ -978,12 +1129,11 @@ class SessionManager {
    * how many messages are waiting to be delivered between turns.
    */
   private handleQueueUpdate(
-    folder: string,
+    state: FolderState,
     sessionId: string,
     depth: number,
   ) {
-    const state = this.folders.get(folder);
-    const session = state?.sessions.get(sessionId);
+    const session = state.sessions.get(sessionId);
     if (!session) return;
     if (session.queueDepth === depth) return;
     session.queueDepth = depth;
@@ -1056,15 +1206,14 @@ class SessionManager {
    * state must never be served to a reconnecting viewer as a
    * snapshot, and "not busy" is not proof of "unchanged".
    */
-  private async resyncFolder(folder: string) {
-    const path = normalizeFolder(folder);
-    const state = this.folders.get(path);
-    const client = this.clients.get(path);
-    if (!state || !client) return;
-    if (this.resyncInFlight.has(path)) return;
-    this.resyncInFlight.add(path);
+  private async resyncFolder(state: FolderState) {
+    const key = agentKey(state.path, state.agentName);
+    const client = this.clients.get(key);
+    if (!client) return;
+    if (this.resyncInFlight.has(key)) return;
+    this.resyncInFlight.add(key);
     if (process.env.DEBUG)
-      console.log(`[resync] ${path}: start`);
+      console.log(`[resync] ${state.path} (${identityOf(state)}): start`);
     try {
       // Which sessions does the agent still know about?
       let known: Set<string> | null = null;
@@ -1077,12 +1226,12 @@ class SessionManager {
         );
       } catch (err) {
         console.warn(
-          `[resync] ${path}: session/list failed: ${(err as Error).message}`,
+          `[resync] ${state.path}: session/list failed: ${(err as Error).message}`,
         );
         return;
       }
       // loadSession has an activeSessionId side effect; keep the
-      // folder's notion of the active session stable across resync.
+      // agent's notion of the active session stable across resync.
       const prevActive = state.activeSessionId;
       for (const session of Array.from(state.sessions.values())) {
         // Someone else is already replaying this session (page
@@ -1098,7 +1247,7 @@ class SessionManager {
             console.log(
               `[resync] replay ${session.id.slice(0, 8)} (known=${known?.has(session.id)}) msgs-before=${session.messages.length}`,
             );
-          await this.loadSession(state.path, session.id);
+          await this.loadSession(state.path, session.id, identityOf(state));
           if (process.env.DEBUG)
             console.log(
               `[resync] replay done msgs-after=${session.messages.length} replaying=${session.replaying}`,
@@ -1106,14 +1255,15 @@ class SessionManager {
           this.broadcast(session, this.controlMessage({ type: "resync" }));
         } catch (err) {
           console.warn(
-            `[resync] ${path}/${session.id}: replay failed: ${(err as Error).message}`,
+            `[resync] ${state.path}/${session.id}: replay failed: ${(err as Error).message}`,
           );
         }
       }
       state.activeSessionId = prevActive;
     } finally {
-      this.resyncInFlight.delete(path);
-      if (process.env.DEBUG) console.log(`[resync] ${path}: done`);
+      this.resyncInFlight.delete(key);
+      if (process.env.DEBUG)
+        console.log(`[resync] ${state.path} (${identityOf(state)}): done`);
     }
   }
 
@@ -1128,12 +1278,12 @@ class SessionManager {
    * recovery resyncs. The old three-strike unregister destroyed
    * perfectly recoverable state over a 30-second blip.
    */
-  private startHeartbeat(folder: string) {
+  private startHeartbeat(key: string) {
     // Idempotent: safe to call from every registration path.
-    this.stopHeartbeat(folder);
+    this.stopHeartbeat(key);
     const tick = async () => {
-      const state = this.folders.get(folder);
-      const client = this.clients.get(folder);
+      const state = this.folders.get(key);
+      const client = this.clients.get(key);
       if (!state || !client) return;
       try {
         // Cap the ping so a hung bridge can't pile up concurrent
@@ -1146,31 +1296,31 @@ class SessionManager {
         state.lastSeenAt = Date.now();
         if (state.status === "degraded") {
           state.status = "ok";
-          console.log(`[heartbeat] ${folder} recovered`);
+          console.log(`[heartbeat] ${state.path} (${identityOf(state)}) recovered`);
           // The endpoint was unreachable: notifications were
           // missed. Rebuild every session from agent truth.
-          void this.resyncFolder(folder);
+          void this.resyncFolder(state);
         }
       } catch (err) {
         if (state.status !== "degraded") {
           state.status = "degraded";
           console.warn(
-            `[heartbeat] ${folder} degraded: ${(err as Error).message}`,
+            `[heartbeat] ${state.path} (${identityOf(state)}) degraded: ${(err as Error).message}`,
           );
         }
       }
     };
     this.heartbeats.set(
-      folder,
+      key,
       setInterval(() => void tick(), HEARTBEAT_INTERVAL_MS),
     );
     void tick(); // probe immediately on registration
   }
 
-  private stopHeartbeat(folder: string) {
-    const t = this.heartbeats.get(folder);
+  private stopHeartbeat(key: string) {
+    const t = this.heartbeats.get(key);
     if (t) clearInterval(t);
-    this.heartbeats.delete(folder);
+    this.heartbeats.delete(key);
   }
 }
 
@@ -1279,6 +1429,24 @@ function sleep(ms: number) {
 
 function normalizeFolder(folder: string): string {
   return folder.replace(/\/+$/, "");
+}
+
+/** Identity of an agent within a path (the launcher's --name). */
+const DEFAULT_AGENT = "default";
+
+/**
+ * Composite registry key: path + agent name. Several agents can
+ * share one path (same worktree, different engines or
+ * sandboxes); the pair is the unique identity. `\u0000` cannot
+ * appear in either half from the shell.
+ */
+function agentKey(path: string, name?: string): string {
+  return `${normalizeFolder(path)}\u0000${name ?? DEFAULT_AGENT}`;
+}
+
+/** The identity name of a registered agent state. */
+function identityOf(state: FolderState): string {
+  return state.agentName ?? DEFAULT_AGENT;
 }
 
 function defaultTitle(): string {

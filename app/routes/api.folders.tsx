@@ -97,12 +97,22 @@ async function register(request: Request) {
 async function unregister(request: Request) {
   const url = new URL(request.url);
   const path = url.searchParams.get("path");
+  const name = url.searchParams.get("name") ?? undefined;
   if (!path) {
     return Response.json(
       { error: "Missing ?path=<absolute path>" },
       { status: 400 },
     );
   }
-  await sessionManager.unregisterFolder(path);
+  try {
+    await sessionManager.unregisterFolder(path, name);
+  } catch (err) {
+    // Ambiguous path (several agents) or unknown name: surface
+    // the registered agent names so the caller can retry.
+    return Response.json(
+      { error: (err as Error).message },
+      { status: 400 },
+    );
+  }
   return new Response(null, { status: 204 });
 }

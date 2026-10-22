@@ -49,6 +49,8 @@ export interface VoiceHandle {
   editNow: () => void;
   /** During thinking/speaking: interrupt — stop narration, listen. */
   bargeIn: () => void;
+  /** Nudge a suspended audio context back to running (Android). */
+  resume: () => void;
 }
 
 export function useVoiceMode(opts: {
@@ -209,9 +211,13 @@ export function useVoiceMode(opts: {
     wsRef.current = ws;
     ws.onopen = () => {
       attemptsRef.current = 0;
+      setError(null);
       ws.send(
         JSON.stringify({ type: "start", language: navigator.language }),
       );
+      // "listening" only once the transport is really up — a
+      // suspended-context or dead-socket "listening" is a lie.
+      setPhase((p) => (p === "connecting" ? "listening" : p));
     };
     ws.onmessage = (e) => {
       try {
@@ -221,7 +227,9 @@ export function useVoiceMode(opts: {
     ws.onclose = () => {
       if (!activeRef.current) return;
       // Our pipeline, our reconnect — transport drops are not the
-      // user's problem. Backoff, cap, and keep the draft.
+      // user's problem. Backoff, cap, and keep the draft. Surface
+      // it so "nothing happens" is never the symptom.
+      setError("Voice connection lost — reconnecting…");
       attemptsRef.current += 1;
       if (attemptsRef.current > 6) {
         setError("Voice connection lost.");
@@ -256,6 +264,14 @@ export function useVoiceMode(opts: {
         streamRef.current = stream;
         const ctx = new AudioContext();
         ctxRef.current = ctx;
+        // Mobile Chrome creates AudioContexts suspended — the mic
+        // track is live (OS indicator on!) but the graph doesn't
+        // run, so no frames ever leave the device and the symptom
+        // is exactly "mic on, nothing happens". Resume it, and keep
+        // a `resume()` escape hatch for taps.
+        if (ctx.state === "suspended") {
+          await ctx.resume().catch(() => {});
+        }
         await ctx.audioWorklet.addModule("/pcm-worklet.js");
         if (!activeRef.current) return teardown();
         const node = new AudioWorkletNode(ctx, "pcm-downsampler");
@@ -274,7 +290,8 @@ export function useVoiceMode(opts: {
           }
         };
         openSocket();
-        if (activeRef.current) setPhase("listening");
+        // No setPhase("listening") here: the socket's onopen flips
+        // the phase once the transport is genuinely up.
       } catch (err) {
         setError(
           (err as Error).name === "NotAllowedError"
@@ -314,6 +331,16 @@ export function useVoiceMode(opts: {
     clearReviewTimer();
     // Only meaningful from thinking/speaking — otherwise a no-op.
     setPhase((p) => (p === "thinking" || p === "speaking" ? "listening" : p));
+  }, []);
+
+  /** Best-effort resume of a suspended audio context (Android can
+   *  suspend it mid-session — screen lock, backgrounding; taps
+   *  count as the gesture that lets us resume). */
+  const resume = useCallback(() => {
+    const ctx = ctxRef.current;
+    if (ctx && ctx.state === "suspended") {
+      void ctx.resume().catch(() => {});
+    }
   }, []);
 
   // Turn lifecycle: after a send, follow busy → narration → listen.
@@ -360,6 +387,8 @@ export function useVoiceMode(opts: {
   }, [phase]);
 
   // Gate the mic by phase: capture only while the user can speak.
+  // Re-opening the mic is also the natural moment to nudge a
+  // suspended audio context back to running.
   const trackRef = useRef<MediaStreamTrack | null>(null);
   useEffect(() => {
     const track = streamRef.current?.getTracks()[0] ?? trackRef.current;
@@ -367,8 +396,9 @@ export function useVoiceMode(opts: {
       trackRef.current = track;
       track.enabled =
         phase === "listening" || phase === "reviewing" || phase === "connecting";
+      if (track.enabled) resume();
     }
-  }, [phase, draft]);
+  }, [phase, draft, resume]);
 
   // Unmount: never leave a mic light on.
   useEffect(() => teardown, [teardown]);
@@ -385,5 +415,6 @@ export function useVoiceMode(opts: {
     stop,
     editNow,
     bargeIn,
+    resume,
   };
 }

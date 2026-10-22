@@ -95,6 +95,10 @@ export function VoicePanel({ voice }: { voice: VoiceHandle }) {
                 : "Voice mode"
           }
           onClick={() => {
+            // Every tap also nudges the audio context — Android
+            // can suspend it mid-session (screen lock, tab switch)
+            // and only a gesture lets us resume.
+            voice.resume();
             if (voice.phase === "reviewing") voice.editNow();
             else if (voice.phase === "thinking" || voice.phase === "speaking")
               voice.bargeIn();

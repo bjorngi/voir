@@ -99,6 +99,13 @@ export type ChatMessage =
       status: "pending" | "in_progress" | "completed" | "failed";
       content?: ToolCallContentBlock[];
       locations?: Array<{ path: string; line?: number }>;
+      /**
+       * Raw tool input as the model sent it (ACP `rawInput`).
+       * The ask_user question card renders its questions from
+       * this; every other tool message ignores it. Unparsed
+       * (`unknown`) on purpose — consumers validate the shape.
+       */
+      rawInput?: unknown;
       at: number;
     }
   | {

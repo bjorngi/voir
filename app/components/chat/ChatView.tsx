@@ -4,7 +4,7 @@
  * updates from the agent and to dispatch user actions
  * (send / cancel / set_model / set_mode).
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatLoaderData } from "~/routes/chat";
 import type {
   AvailableModel,
@@ -470,6 +470,33 @@ export function ChatView({
     }
   }, [messages, tts, voice.active, voicePrefs.narrate, voicePrefs.ttsVoice, voicePrefs.ttsSpeed]);
 
+  // ---------------------------------------------------------------------
+  // ask_user question cards send answers through the normal chat
+  // action — same contract as the composer and voice mode
+  // (intent=send, payload {text, resources}) — so the answer is a
+  // plain user message: it lands in the transcript, replays with the
+  // session, and the model's prompt guidelines handle reading it as
+  // the answer.
+  const sendAnswer = useCallback(
+    async (text: string) => {
+      const body = new FormData();
+      body.set("intent", "send");
+      body.set("payload", JSON.stringify({ text, resources: [] }));
+      try {
+        await fetch(sessionUrl(folder.path, initial.id), {
+          method: "post",
+          body,
+        });
+      } catch {
+        // The SSE stream is the source of truth; a failed send here
+        // surfaces as the composer's own errors do — the message just
+        // doesn't appear. The card's local "sent" state stays, but
+        // the user can still answer in the composer.
+      }
+    },
+    [folder.path, initial.id],
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="relative min-h-0 flex-1">
@@ -478,8 +505,22 @@ export function ChatView({
           className="absolute inset-0 overflow-y-auto px-3 py-3 sm:px-4"
         >
           <div className="mx-auto flex max-w-3xl flex-col gap-3">
-            {messages.map((m) => (
-              <MessageBubble key={m.id} msg={m} />
+            {messages.map((m, i) => (
+              <MessageBubble
+                key={m.id}
+                msg={m}
+                // A question card is "answered" once any user message
+                // follows it in the transcript — the answer is a normal
+                // message, so that's exactly the signal. Collapses the
+                // card (live and on replay) so old questions can't be
+                // answered twice.
+                answered={
+                  m.role === "agent" &&
+                  m.kind === "tool" &&
+                  messages.slice(i + 1).some((x) => x.role === "user")
+                }
+                onSendAnswer={sendAnswer}
+              />
             ))}
           </div>
         </div>

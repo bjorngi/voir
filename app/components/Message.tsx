@@ -17,10 +17,42 @@ import { useDebugPopoverDismiss } from "./DebugPopover";
  * opens a debug panel with the raw JSON — useful for inspecting
  * tool-call content, message ids, etc.
  */
-export function MessageBubble({ msg }: { msg: ChatMessage }) {
+export function MessageBubble({
+  msg,
+  answered = false,
+  onSendAnswer,
+}: {
+  msg: ChatMessage;
+  /** True when a user message follows this one in the transcript —
+   * an ask_user card is then collapsed (its answer already arrived). */
+  answered?: boolean;
+  /** Send an ask_user answer as a regular chat message. Provided by
+   * ChatView; the card formats the text, the send path is the normal
+   * composer one (intent=send). */
+  onSendAnswer?: (text: string) => void;
+}) {
   if (msg.kind === "text") return <Text m={msg} />;
   if (msg.kind === "thought") return <Thought m={msg} />;
-  if (msg.kind === "tool") return <Tool m={msg} />;
+  if (msg.kind === "tool") {
+    // The ask_user extension (sentinel mode) completes the tool call
+    // immediately and expects the host to render the questions from
+    // rawInput and collect the answer as a follow-up message. That's
+    // this card. Anything else (or unparseable input) falls back to
+    // the generic tool outline.
+    if (msg.title === "ask_user") {
+      const questions = parseAskUserInput(msg.rawInput);
+      if (questions)
+        return (
+          <QuestionCard
+            m={msg}
+            questions={questions}
+            answered={answered}
+            onSend={onSendAnswer}
+          />
+        );
+    }
+    return <Tool m={msg} />;
+  }
   if (msg.kind === "plan") return <Plan m={msg} />;
   return null;
 }
@@ -129,6 +161,233 @@ function Thought({ m }: { m: ChatMessage & { kind: "thought" } }) {
           <Markdown text={m.text} />
         </div>
       )}
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------
+// Question card — the ask_user host side
+// -----------------------------------------------------------------------
+
+/** Parsed ask_user tool input. The extension's wire shape (see its
+ * README): one or more questions, each with optional labeled options;
+ * questions without options are free-text and answered in the
+ * composer, not the card. */
+interface AskUserQuestion {
+  question: string;
+  header?: string;
+  options: Array<{ label: string; description?: string }>;
+  multiSelect?: boolean;
+}
+
+/**
+ * Validate-and-cast the raw tool input into questions. Returns null
+ * for anything that isn't a plausible ask_user payload (unknown tools,
+ * partial/streamed args, foreign schemas) — the caller then renders
+ * the generic tool outline instead of a broken card.
+ */
+export function parseAskUserInput(rawInput: unknown): AskUserQuestion[] | null {
+  if (!rawInput || typeof rawInput !== "object") return null;
+  const questions = (rawInput as { questions?: unknown }).questions;
+  if (!Array.isArray(questions) || questions.length === 0) return null;
+  const parsed: AskUserQuestion[] = [];
+  for (const q of questions) {
+    if (!q || typeof q !== "object") continue;
+    const { question, header, options, multiSelect } = q as {
+      question?: unknown;
+      header?: unknown;
+      options?: unknown;
+      multiSelect?: unknown;
+    };
+    if (typeof question !== "string" || !question) continue;
+    const opts: AskUserQuestion["options"] = [];
+    if (Array.isArray(options)) {
+      for (const o of options) {
+        if (!o || typeof o !== "object") continue;
+        const label = (o as { label?: unknown }).label;
+        if (typeof label !== "string" || !label) continue;
+        const description = (o as { description?: unknown }).description;
+        opts.push({
+          label,
+          description: typeof description === "string" ? description : undefined,
+        });
+      }
+    }
+    parsed.push({
+      question,
+      header: typeof header === "string" ? header : undefined,
+      options: opts,
+      multiSelect: multiSelect === true,
+    });
+  }
+  return parsed.length > 0 ? parsed : null;
+}
+
+/**
+ * The question card. Single single-select question: tap an option →
+ * the answer sends immediately (fewest taps on a phone). Everything
+ * else (multi-select, several questions): selections collect and a
+ * Send button appears. Free-text questions are answered in the
+ * composer below — the hint says so.
+ *
+ * Collapses to a one-line "answered" state once a user message
+ * follows the tool call in the transcript (computed by ChatView) or
+ * this instance just sent one. Replay-safe: an old card from a
+ * session/load re-renders collapsed the same way.
+ */
+function QuestionCard({
+  m,
+  questions,
+  answered,
+  onSend,
+}: {
+  m: ChatMessage & { kind: "tool" };
+  questions: AskUserQuestion[];
+  answered: boolean;
+  onSend?: (text: string) => void;
+}) {
+  // Per-question selected option labels, keyed by question index.
+  const [selection, setSelection] = useState<Map<number, string[]>>(new Map());
+  const [sent, setSent] = useState(false);
+  const done = answered || sent;
+
+  const send = (text: string) => {
+    if (done || !onSend) return;
+    setSent(true);
+    onSend(text);
+  };
+
+  const pick = (qi: number, label: string) => {
+    const q = questions[qi];
+    if (!q) return;
+    // One single-select question: tap = send. No intermediate state.
+    if (questions.length === 1 && !q.multiSelect) {
+      send(label);
+      return;
+    }
+    setSelection((prev) => {
+      const next = new Map(prev);
+      if (q.multiSelect) {
+        const cur = next.get(qi) ?? [];
+        next.set(
+          qi,
+          cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label],
+        );
+      } else {
+        next.set(qi, [label]);
+      }
+      return next;
+    });
+  };
+
+  // Every optioned question answered → Send enabled. Questions
+  // without options are composer/free-text territory and don't gate
+  // the button.
+  const answerable = questions.filter((q) => q.options.length > 0);
+  const allAnswered =
+    answerable.length > 0 &&
+    answerable.every((_, qi0) => {
+      const qi = questions.indexOf(answerable[qi0]);
+      return (selection.get(qi) ?? []).length > 0;
+    });
+  // Any multi-select or more than one question: collect-then-send
+  // mode, so show the button.
+  const showSend =
+    questions.some((q) => q.multiSelect) || questions.length > 1;
+
+  if (done) {
+    return (
+      <div className="relative px-4 py-2 text-[12px]">
+        <DebugButton msg={m} />
+        <span className="font-mono uppercase tracking-wide text-emerald-400">
+          ask_user
+        </span>{" "}
+        <span className="text-neutral-500">— answered in a follow-up message</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative border border-neutral-800 bg-neutral-950 px-4 py-3">
+      <DebugButton msg={m} />
+      <div className="mb-2 font-mono text-[11px] uppercase tracking-wide text-amber-400">
+        {m.status === "pending" || m.status === "in_progress"
+          ? "asking…"
+          : "ask_user"}
+      </div>
+      {questions.map((q, qi) => (
+        <div key={qi} className={qi > 0 ? "mt-3" : ""}>
+          {q.header && (
+            <div className="font-mono text-[11px] uppercase tracking-wide text-neutral-500">
+              {q.header}
+            </div>
+          )}
+          <div className="text-[14px] leading-snug text-neutral-100">
+            {q.question}
+          </div>
+          {q.options.length > 0 ? (
+            <div className="mt-2 flex flex-col gap-1.5">
+              {q.options.map((o) => {
+                const selected = (selection.get(qi) ?? []).includes(o.label);
+                return (
+                  <button
+                    key={o.label}
+                    type="button"
+                    onClick={() => pick(qi, o.label)}
+                    className={
+                      "border px-3 py-2 text-left " +
+                      (selected
+                        ? "border-amber-500/60 bg-amber-500/10 text-amber-200"
+                        : "border-neutral-800 bg-neutral-900 text-neutral-200")
+                    }
+                  >
+                    <span className="block text-[14px] leading-snug">{o.label}</span>
+                    {o.description && (
+                      <span className="mt-0.5 block text-[12px] leading-snug text-neutral-500">
+                        {o.description}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="mt-1 text-[12px] text-neutral-600">
+              Free text — answer in the composer below.
+            </div>
+          )}
+        </div>
+      ))}
+      {showSend && (
+        <button
+          type="button"
+          disabled={!allAnswered}
+          onClick={() => {
+            const parts: string[] = [];
+            questions.forEach((q, qi) => {
+              const sel = selection.get(qi);
+              if (!sel?.length) return;
+              parts.push(
+                questions.length === 1
+                  ? sel.join(", ")
+                  : `${qi + 1}. ${sel.join(", ")}`,
+              );
+            });
+            if (parts.length > 0) send(parts.join("\n"));
+          }}
+          className={
+            "mt-3 border px-3 py-2 font-mono text-[12px] uppercase tracking-wide " +
+            (allAnswered
+              ? "border-amber-500/60 bg-amber-500/10 text-amber-200"
+              : "border-neutral-800 bg-neutral-900 text-neutral-600")
+          }
+        >
+          Send answers
+        </button>
+      )}
+      <div className="mt-2 text-[11px] text-neutral-600">
+        or type your own reply below
+      </div>
     </div>
   );
 }

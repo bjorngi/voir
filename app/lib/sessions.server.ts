@@ -992,6 +992,7 @@ class SessionManager {
         content: Array.isArray(update.content) ? update.content : undefined,
         locations: (update as { locations?: Array<{ path: string; line?: number }> })
           .locations,
+        rawInput: (update as { rawInput?: unknown }).rawInput,
         at: Date.now(),
       };
       session.messages.push(msg);
@@ -1002,12 +1003,14 @@ class SessionManager {
     // tool_call_update
     if (update.sessionUpdate === "tool_call_update") {
       const toolCallId = update.toolCallId ?? id;
+      const rawInput = (update as { rawInput?: unknown }).rawInput;
       for (let i = session.messages.length - 1; i >= 0; i--) {
         const m = session.messages[i];
         if (m.kind === "tool" && m.toolCallId === toolCallId) {
           if (update.status) m.status = update.status as typeof m.status;
           if (Array.isArray(update.content)) m.content = update.content;
           if (update.title) m.title = update.title;
+          if (rawInput !== undefined) m.rawInput = rawInput;
           this.broadcast(session, m);
           break;
         }

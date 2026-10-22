@@ -110,6 +110,12 @@ export function useSpeechSynthesis(): Tts {
   const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartRef = useRef(0);
   const sampleRef = useRef<number[]>([]);
+  // Consecutive neural-socket failures — after a few, fall back to
+  // the browser voices for the session (production runs
+  // react-router-serve, which has no WebSocket support; without
+  // this the neural engine would reconnect forever and never
+  // say a word).
+  const failCountRef = useRef(0);
 
   const cancel = useCallback(() => {
     if (neuralRef.current) {
@@ -189,10 +195,31 @@ export function useSpeechSynthesis(): Tts {
         }
       } catch {}
     };
+    ws.onopen = () => {
+      failCountRef.current = 0;
+    };
     ws.onclose = () => {
       if (wsRef.current === ws) wsRef.current = null;
       flushSamples();
       inFlightRef.current = false;
+      // Fall back to browser voices after repeated connection
+      // failures — drain the queue through speechSynthesis so the
+      // narration still happens, just less beautifully.
+      failCountRef.current += 1;
+      if (failCountRef.current >= 3) {
+        setNeuralTts(false);
+        neuralRef.current = false;
+        const pending = queueRef.current;
+        queueRef.current = [];
+        if ("speechSynthesis" in window) {
+          for (const { text } of pending) {
+            const u = new SpeechSynthesisUtterance(text);
+            u.lang = navigator.language;
+            window.speechSynthesis.speak(u);
+          }
+        }
+        return;
+      }
       pumpRef.current();
     };
     return ws;

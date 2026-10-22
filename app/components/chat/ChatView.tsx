@@ -13,13 +13,14 @@ import type {
 } from "~/lib/chat-types";
 import { streamUrl } from "~/lib/urls";
 import { useAutoScroll, usePageVisible } from "~/lib/hooks";
+import type { Tts } from "~/lib/use-tts";
 import { MessageBubble } from "~/components/Message";
 import { Composer } from "~/components/Composer";
 import { ModelDrawer, usePendingSet } from "~/components/ModelDrawer";
 
 type ChatData = Extract<ChatLoaderData, { k: "chat" }>;
 
-export function ChatView({ data }: { data: ChatData }) {
+export function ChatView({ data, tts }: { data: ChatData; tts: Tts }) {
   const { folder, session: initial } = data;
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
   const [busy, setBusy] = useState(initial.busy);
@@ -300,6 +301,64 @@ export function ChatView({ data }: { data: ChatData }) {
     };
   }, [folder.path, initial.id]);
 
+  // ---------------------------------------------------------------------
+  // Spoken replies (TTS): narrate agent text messages as they
+  // stream — sentence by sentence so the voice tracks the text
+  // instead of waiting for the whole turn. Per-message progress is
+  // kept in a ref keyed by message id, so reconnect snapshot
+  // replacements and idempotent re-renders don't re-speak content.
+  // The `tts` hook owns the toggle (header) and the utterance
+  // queue; cancelling on user messages keeps turns from stacking
+  // audio on top of each other.
+  const spokenChars = useRef(new Map<string, number>());
+  const ttsSeeded = useRef(false);
+  const prevUserCount = useRef(0);
+  useEffect(() => {
+    if (!tts.enabled) return;
+    // Seed on first run (or on first run after enabling): mark
+    // everything currently on screen as already spoken so we
+    // never narrate history — only content that arrives from here
+    // on (including the tail of a turn that was streaming when
+    // the toggle flipped).
+    if (!ttsSeeded.current) {
+      for (const m of messages) {
+        if (m.role === "agent" && m.kind === "text") {
+          spokenChars.current.set(m.id, (m.text ?? "").length);
+        }
+      }
+      ttsSeeded.current = true;
+      return;
+    }
+    // A new user message means a new turn — drop any still-queued
+    // audio from the old one so replies can't overlap.
+    const userCount = messages.reduce(
+      (n, m) => n + (m.role === "user" ? 1 : 0),
+      0,
+    );
+    if (userCount > prevUserCount.current) tts.cancel();
+    prevUserCount.current = userCount;
+
+    for (const m of messages) {
+      if (m.role !== "agent" || m.kind !== "text") continue;
+      const text = m.text ?? "";
+      const spoken = spokenChars.current.get(m.id) ?? 0;
+      if (text.length <= spoken) continue;
+      if (m.streaming) {
+        // Mid-turn: speak only up to the last completed sentence.
+        // The rest arrives in chunks; speaking partials sounds
+        // broken. The remainder is flushed when streaming ends.
+        const cut = sentenceEnd(text.slice(spoken));
+        if (cut > 0) {
+          spokenChars.current.set(m.id, spoken + cut);
+          tts.speak(text.slice(spoken, spoken + cut).trim());
+        }
+      } else {
+        spokenChars.current.set(m.id, text.length);
+        tts.speak(text.slice(spoken).trim());
+      }
+    }
+  }, [messages, tts]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="relative min-h-0 flex-1">
@@ -371,6 +430,18 @@ export function ChatView({ data }: { data: ChatData }) {
       />
     </div>
   );
+}
+
+/**
+ * Length of the longest prefix of `s` that ends on a completed
+ * sentence (up to and including the last ".", "?", "!" or "…"
+ * that is followed by whitespace or end-of-string). 0 when no
+ * sentence boundary exists yet. Used by the TTS narrating to
+ * avoid speaking half-finished sentences mid-stream.
+ */
+function sentenceEnd(s: string): number {
+  const m = /^[\s\S]*[.!?…](?=\s|$)/.exec(s);
+  return m ? m[0].length : 0;
 }
 
 /**

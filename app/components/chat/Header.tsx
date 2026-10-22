@@ -1,16 +1,23 @@
 /**
- * The page header: a status dot + label, with a menu button on
- * the right that opens the picker. The dot pulses amber while
- * a turn is in flight; otherwise it sits dim.
+ * The page header: a status dot + label, a text-to-speech toggle
+ * (chat view only), and a menu button on the right that opens the
+ * picker. The dot pulses amber while a turn is in flight;
+ * otherwise it sits dim.
  */
 export function Header({
   label,
   busy,
   onMenu,
+  tts,
 }: {
   label: string;
   busy?: boolean;
   onMenu: () => void;
+  /** When present (chat view), renders the spoken-replies toggle. */
+  tts?: {
+    enabled: boolean;
+    onToggle: () => void;
+  };
 }) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-neutral-800 px-3">
@@ -25,6 +32,34 @@ export function Header({
           {label}
         </span>
       </div>
+      {tts && (
+        <button
+          type="button"
+          onClick={tts.onToggle}
+          aria-pressed={tts.enabled}
+          aria-label="Toggle spoken replies"
+          title="Speak agent replies out loud"
+          className={
+            "inline-flex h-9 w-9 items-center justify-center rounded active:bg-neutral-900 " +
+            (tts.enabled ? "text-amber-300" : "text-neutral-600")
+          }
+        >
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+          </svg>
+        </button>
+      )}
       <button
         type="button"
         onClick={onMenu}

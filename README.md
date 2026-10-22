@@ -168,6 +168,42 @@ acp-spawn --agent 'firejail --noprofile --private=. -- opencode acp' --name open
 Voir does not sandbox. That is the launcher's job, and the launcher's
 job is yours.
 
+## Install it on your phone (PWA)
+
+Voir is an installable progressive web app: manifest, service
+worker (network-first navigations with an offline fallback
+page) and a generated icon set (`bin/gen-icons.py`).
+
+- **Android/Chrome:** open the site → menu → *Install app* / *Add
+  to Home screen*. You get a standalone window, its own icon and an
+  offline page when the server is unreachable.
+- **iOS/Safari:** Share → *Add to Home Screen*. The app runs
+  standalone with a translucent status bar.
+
+The service worker deliberately does no app-shell caching — the
+transcript always comes live from the server and the page's own
+reconnect logic (above) handles transport hiccups. When
+AI-initiated chats + Web Push notifications arrive, the `push`
+and `notificationclick` handlers land in `public/sw.js`.
+
+## Voice
+
+Two affordances, both using the browser's built-in speech APIs —
+no extra services, no API keys, nothing leaves the device's
+platform speech stack:
+
+- **Dictation (speech → text):** the mic button in the composer
+  (visible when the browser supports the Web Speech API —
+  Chrome, Edge, Safari/iOS 14.5+; not Firefox). Tap, talk, tap
+  again. Interim words preview in the composer while you speak;
+  continuous silence doesn't end the session until you stop it.
+- **Spoken replies (text → speech):** the speaker button in the
+  chat header. When on, agent text messages are narrated as they
+  stream — sentence by sentence, so the voice tracks the text
+  instead of waiting for the turn to end. The choice persists in
+  localStorage; sending a new message cancels any still-queued
+  audio so turns can't talk over each other.
+
 ## Security: this is your job
 
 Voir is **not secured**. Out of the box it:

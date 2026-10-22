@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { ChatLoaderData } from "~/routes/chat";
 import { folderUrl, sessionUrl } from "~/lib/urls";
 import { shortPath } from "~/lib/format";
+import { useSpeechSynthesis } from "~/lib/use-tts";
 import { FolderTree } from "~/components/FolderTree";
 import { Picker } from "~/components/Picker";
 import { SessionDebugButton } from "~/components/SessionDebugButton";
@@ -17,6 +18,10 @@ import { Header } from "./Header";
 
 export function ChatApp({ data }: { data: ChatLoaderData }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Spoken replies: the toggle lives in the header, the speaking
+  // lives in the chat view. One hook instance for both — the
+  // state is per-app, not per-view.
+  const tts = useSpeechSynthesis();
 
   // The tab bar lives between the header and the body for
   // chat and changes. Sessions-list and root views don't have
@@ -50,7 +55,19 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
 
   return (
     <div className="flex h-full flex-col bg-neutral-950">
-      <Header label={label} busy={busy} onMenu={() => setPickerOpen(true)} />
+      <Header
+        label={label}
+        busy={busy}
+        onMenu={() => setPickerOpen(true)}
+        tts={
+          data.k === "chat" && tts.supported
+            ? {
+                enabled: tts.enabled,
+                onToggle: () => tts.setEnabled(!tts.enabled),
+              }
+            : undefined
+        }
+      />
       {showTabs && (
         <ChatTabs
           folder={data.folder.path}
@@ -68,7 +85,7 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         {data.k === "sessions" && (
           <SessionsView data={data} onPick={() => setPickerOpen(false)} />
         )}
-        {data.k === "chat" && <ChatView data={data} />}
+        {data.k === "chat" && <ChatView data={data} tts={tts} />}
         {data.k === "changes" && (
           <ChangesView
             folder={data.folder.path}

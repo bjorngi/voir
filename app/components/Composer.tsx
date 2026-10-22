@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFetcher } from "react-router";
 import type { SlashCommand } from "~/lib/chat-types";
+import { useSpeechRecognition } from "~/lib/use-speech-recognition";
 import { sessionUrl } from "~/lib/urls";
 
 /**
@@ -130,6 +131,23 @@ export function Composer({
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [menuIndex, setMenuIndex] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // Speech-to-text dictation. The recognizer is transport-only
+  // (see use-speech-recognition); this component owns the text
+  // state, so dictation works like typing: `base` is the text as
+  // of the last committed word, interim results preview on top
+  // of it, finals commit into it. Manual typing updates `base`
+  // too, so dictated and typed text interleave cleanly.
+  const micBase = useRef("");
+  const joinFor = (base: string, more: string) =>
+    base && !/\s$/.test(base) && !/^\s/.test(more) ? base + " " + more : base + more;
+  const mic = useSpeechRecognition({
+    onInterim: (t) => setText(joinFor(micBase.current, t)),
+    onFinal: (t) => {
+      micBase.current = joinFor(micBase.current, t.trim());
+      setText(micBase.current);
+    },
+  });
 
   // Load file index on first @ and on folder change
   useEffect(() => {
@@ -274,6 +292,8 @@ export function Composer({
     // into from the chat UI.
     const payload = { text: text.trim(), resources: mentions };
     setText("");
+    micBase.current = "";
+    mic.stop();
     setMentions([]);
     onSent?.();
     fetcher.submit(
@@ -289,6 +309,9 @@ export function Composer({
   function onChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const next = e.target.value;
     setText(next);
+    // Manual typing becomes the dictation base so interim
+    // results don't resurrect deleted text.
+    micBase.current = next;
     // Drop mentions whose @-token was deleted entirely
     setMentions((ms) =>
       ms.filter((m) => next.includes(`@${m.name}`)),
@@ -385,6 +408,9 @@ export function Composer({
       {fetcher.data?.error && (
         <div className="mb-2 px-2 text-xs text-rose-400">{fetcher.data.error}</div>
       )}
+      {mic.error && (
+        <div className="mb-2 px-2 text-xs text-rose-400">{mic.error}</div>
+      )}
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <textarea
@@ -447,6 +473,44 @@ export function Composer({
           className="scrollbar-hide composer-textarea flex-1 resize-none border border-neutral-800 bg-neutral-900 px-4 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-600"
         />
         <div className="flex shrink-0 items-stretch gap-2 sm:contents">
+          {mic.supported && (
+            <button
+              type="button"
+              onClick={() => {
+                if (mic.listening) {
+                  mic.stop();
+                } else {
+                  micBase.current = text;
+                  mic.start();
+                }
+              }}
+              aria-pressed={mic.listening}
+              aria-label={mic.listening ? "Stop dictation" : "Dictate message"}
+              title="Dictate (speech to text)"
+              className={
+                "h-11 flex-1 border px-3 transition-colors active:bg-white/10 sm:hidden sm:flex-none sm:px-4 " +
+                (mic.listening
+                  ? "border-amber-400/70 bg-transparent text-amber-300 animate-pulse"
+                  : "border-neutral-800 bg-transparent text-neutral-300")
+              }
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+                <line x1="12" y1="18" x2="12" y2="22" />
+              </svg>
+            </button>
+          )}
           {busy && (
             <button
               type="button"

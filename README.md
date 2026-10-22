@@ -21,6 +21,12 @@ npm run dev          # http://localhost:9000
 Open `http://localhost:9000` in your browser. You'll see an empty
 **Folders** list — no worktrees are attached yet, that's expected.
 
+With Tailscale up, the dev server also listens on your tailnet
+address, so you can preview from your phone at
+`http://<tailscale-ip>:9000` (see `vite.config.ts`). Attach agents
+exactly as below — the launcher runs on the same machine, so its
+`--ui` URL stays loopback regardless of where *you* browse from.
+
 <img src="images/folder-overview.jpeg" width="360" alt="All folders connected to Voir" />
 
 For a production-style run:

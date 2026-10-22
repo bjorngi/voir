@@ -142,11 +142,24 @@ export function Composer({
   // preview lives in `interim` state for the overlay. Everything
   // commits exactly once in onStop, when the session really ends.
   const [dictating, setDictating] = useState(false);
-  // Mic stopped on release but the recognizer is still flushing
-  // its final transcript — the overlay switches from "listening"
-  // to a transcribing state instead of pretending nothing is
-  // happening for the ~a second the flush can take.
-  const [finishing, setFinishing] = useState(false);
+  // Finger is down on Send for a dictation hold (state mirror of
+  // holdingRef, which the pointer handlers read imperatively).
+  const [holding, setHolding] = useState(false);
+  // The transcript has been committed into the composer text.
+  // The popup stays up until the finger is up too — if the
+  // recognizer died mid-hold (iOS rejects the silence-restart
+  // once the press gesture ages out), it shows "Mic ended —
+  // release" instead of vanishing and popping the keyboard
+  // under a finger that's still holding.
+  const [committed, setCommitted] = useState(false);
+  // Post-commit hand-over: the popup lingers briefly and slides
+  // into the input so the transcript reads as *moved* to the
+  // field, not as deleted from the popup.
+  const [lingering, setLingering] = useState(false);
+  const [lastTranscript, setLastTranscript] = useState("");
+  // Brief amber border flash on the textarea when the transcript
+  // lands in it.
+  const [flash, setFlash] = useState(false);
   const [interim, setInterim] = useState("");
   const finalRef = useRef("");
   const interimRef = useRef("");
@@ -170,16 +183,37 @@ export function Composer({
       // Fires once per dictation (restarts don't count). Any final
       // flushed by stop() has been delivered by now; commit finals
       // plus whatever interim never finalized (e.g. "aborted").
-      setDictating(false);
-      setFinishing(false);
+      // NOTE: this can fire while the finger is still down (dead
+      // session). It only commits — the popup hand-over and the
+      // focus/keyboard happen after release, in the effect below.
       const transcript = appendFinal(finalRef.current, interimRef.current).trim();
       finalRef.current = "";
       interimRef.current = "";
       setInterim("");
+      setLastTranscript(transcript);
+      setCommitted(true);
       if (transcript) setText((prev) => appendFinal(prev, transcript));
-      requestAnimationFrame(() => ref.current?.focus());
     },
   });
+
+  // Hand-over: transcript committed AND finger up → linger a
+  // beat while the popup animates into the input, then close it,
+  // flash the textarea, and focus it for editing (this is the
+  // only place the keyboard comes back — never mid-hold).
+  useEffect(() => {
+    if (!committed || holding) return;
+    setLingering(true);
+    const t = setTimeout(() => {
+      setLingering(false);
+      setDictating(false);
+      setCommitted(false);
+      setLastTranscript("");
+      setFlash(true);
+      ref.current?.focus();
+      setTimeout(() => setFlash(false), 600);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [committed, holding]);
 
   // Hold-to-talk state machine for the Send button. Short press =
   // send (as before). Holding ≥ 250ms = dictation: overlay pops
@@ -195,22 +229,24 @@ export function Composer({
     finalRef.current = "";
     interimRef.current = "";
     setInterim("");
-    setFinishing(false);
+    setLastTranscript("");
+    setCommitted(false);
+    setLingering(false);
     setDictating(true);
     // Collapse the on-screen keyboard — the dictation popup owns
     // the screen while you talk, and there's no reason the
     // keyboard should eat half of it. Focus (and the keyboard)
-    // come back on commit, ready to edit the transcript.
+    // come back on hand-over, ready to edit the transcript.
     ref.current?.blur();
     mic.start();
   };
 
   const stopDictation = () => {
     // The recognizer takes a moment to flush its final after
-    // stop() — switch the overlay to the transcribing state while
-    // it lands instead of silently stalling.
-    setFinishing(true);
-    mic.stop(); // transcript commits in onStop
+    // stop(). The overlay derives its "Transcribing…" state from
+    // !holding && !committed, so nothing to set here — the commit
+    // lands in onStop and the effect above runs the hand-over.
+    mic.stop();
   };
 
   const clearHold = () => {
@@ -224,16 +260,18 @@ export function Composer({
     // Ignore second fingers while a dictation or its final flush
     // is in flight — a second hold would reset the transcript
     // accumulator mid-commit.
-    if (!mic.supported || dictating || finishing) return;
+    if (!mic.supported || dictating) return;
     e.preventDefault(); // no focus steal, no tap highlight
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {}
     holdingRef.current = false;
+    setHolding(false);
     clearHold();
     holdTimer.current = setTimeout(() => {
       holdTimer.current = null;
       holdingRef.current = true;
+      setHolding(true);
       startDictation();
     }, HOLD_MS);
   };
@@ -242,11 +280,14 @@ export function Composer({
     clearHold();
     if (holdingRef.current) {
       // This is the release of the finger that started the hold.
+      // If the transcript already committed (mic died mid-hold),
+      // this release is what triggers the linger hand-over.
       holdingRef.current = false;
+      setHolding(false);
       stopDictation();
       return;
     }
-    if (dictating || finishing) return; // stray tap during hold/flush
+    if (dictating) return; // stray tap during hold/flush
     send();
   };
 
@@ -254,6 +295,7 @@ export function Composer({
     clearHold();
     if (holdingRef.current) {
       holdingRef.current = false;
+      setHolding(false);
       stopDictation(); // commits what was said instead of dropping it
     }
   };
@@ -473,17 +515,31 @@ export function Composer({
         <div
           role="status"
           aria-live="polite"
-          className="absolute bottom-full left-2 right-2 mb-1 border border-amber-400/40 bg-neutral-900 p-3 shadow-2xl"
+          className={
+            // pointer-events-none: the popup is display-only and
+            // must never eat a tap meant for the composer beneath
+            // it. On hand-over it slides down toward the input and
+            // fades — the 200ms transition mirrors the 250ms
+            // linger in the hand-over effect.
+            "pointer-events-none absolute bottom-full left-2 right-2 mb-1 border border-amber-400/40 bg-neutral-900 p-3 shadow-2xl transition-all duration-200 ease-out " +
+            (lingering ? "translate-y-2 opacity-0" : "opacity-100")
+          }
         >
           <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-amber-300">
             <span
               aria-hidden="true"
               className={
                 "inline-block h-2 w-2 rounded-full bg-amber-400 " +
-                (finishing ? "opacity-60" : "animate-pulse")
+                (committed || !holding ? "opacity-60" : "animate-pulse")
               }
             />
-            {finishing ? "Transcribing…" : "Listening — release to insert"}
+            {committed
+              ? holding
+                ? "Mic ended — release"
+                : "Inserted ✓"
+              : holding
+                ? "Listening — release to insert"
+                : "Transcribing…"}
             {mic.error && (
               <span className="ml-auto normal-case tracking-normal text-rose-400">
                 {mic.error}
@@ -491,11 +547,12 @@ export function Composer({
             )}
           </div>
           <div className="mt-1.5 min-h-6 font-mono text-[14px] leading-relaxed text-neutral-100">
-            {/* Display via appendFinal too: a restarted session's
-                interim can re-capture the tail of what's already
-                committed — dedupe live so the popup never shows
-                the same words twice. */}
-            {appendFinal(finalRef.current, interim) || (
+            {/* Before the commit this dedupes live (a restarted
+                session's interim can re-capture the tail of what's
+                already committed); after the commit it shows the
+                final transcript while the popup lingers and hands
+                over to the input. */}
+            {(committed ? lastTranscript : appendFinal(finalRef.current, interim)) || (
               <span className="text-neutral-500">…</span>
             )}
           </div>
@@ -605,7 +662,12 @@ export function Composer({
               ? "Type to queue… (@ attach, / commands, Esc to stop — hold Send to dictate)"
               : "Message…  (@ attach, / commands, ⌘+Enter to send — hold Send to dictate)"
           }
-          className="scrollbar-hide composer-textarea flex-1 resize-none border border-neutral-800 bg-neutral-900 px-4 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-600"
+          className={
+            "scrollbar-hide composer-textarea flex-1 resize-none border border-neutral-800 bg-neutral-900 px-4 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-600 " +
+            // A ring rather than a border so the flash doesn't
+            // fight the focus style — it shows while focused.
+            (flash ? "ring-2 ring-amber-400/50" : "")
+          }
         />
         <div className="flex shrink-0 items-stretch gap-2 sm:contents">
           {busy && (
@@ -651,7 +713,7 @@ export function Composer({
                     : "border-neutral-700 bg-transparent text-neutral-600 active:bg-transparent")
             }
           >
-            {dictating ? (finishing ? "Transcribing…" : "Listening…") : busy ? "Queue" : "Send"}
+            {dictating ? (committed ? "Inserted ✓" : "Listening…") : busy ? "Queue" : "Send"}
           </button>
         </div>
     </div>

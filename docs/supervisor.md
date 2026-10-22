@@ -70,10 +70,14 @@ Default path: `~/.local/state/voir/agents.json` (override:
   preset (config edited away) marks the entry errored and leaves
   the state alone — desired state is never silently rewritten to
   fix a config problem.
-- `name` — optional identity, defaults to the preset name. This
-  is what Voir keys the agent by (path + name) and what the API
-  and CLI use. Defaults like `pi` are fine; use an explicit name
-  when two agents share one path.
+- `name` — optional identity. Via the API/CLI it is generated
+  when omitted (`<preset>-<hex6>`) and **persisted in the state
+  file**, so identity survives boots (per-boot generation would
+  orphan the Voir agent on every restart). Hand-written entries
+  without a name default to the preset as their identity — so
+  hand-write a name when two agents share one path. This is
+  what Voir keys the agent by (path + name) and what the API and
+  CLI use.
 
 The file is *desired* state, not observed: what should exist, not
 what does. What actually runs lives in the supervisor's memory.
@@ -132,6 +136,7 @@ GET  /agents               → 200 { agents: [
                                    agentUrl, crashes } ] }
 POST /agents               → 201 { name }
      body: { dir, preset, name? }
+     name is generated (<preset>-<hex6>) when omitted
      400 unknown preset (response lists the available names)
      400 not a directory
      409 name already in use
@@ -150,6 +155,11 @@ voir-supervisor add <dir> --preset <p> [--name <n>]
 voir-supervisor rm <name|dir>
 voir-supervisor ls
 ```
+
+`--name` is optional everywhere: omitted names are generated
+(`<preset>-<hex6>` via the daemon, `agent-<hex6>` for one-shot
+`acp-spawn`), so spawning another agent in the same folder never
+requires inventing a name.
 
 Flags: `--config`, `--state`, `--api-port` (all with the defaults
 above). `add` expands `~` in `<dir>`.

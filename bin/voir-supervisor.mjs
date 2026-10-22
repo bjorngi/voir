@@ -43,7 +43,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { launchAgent, createRegistrar, findFreePort } from "./acp-lib.mjs";
+import { launchAgent, createRegistrar, randomName } from "./acp-lib.mjs";
 
 const DEFAULT_API_PORT = 7420;
 const REREGISTER_INTERVAL_MS = 30_000;
@@ -359,9 +359,6 @@ class Supervisor {
           const body = JSON.parse(Buffer.concat(chunks).toString());
           const dir = typeof body.dir === "string" ? body.dir : null;
           const preset = typeof body.preset === "string" ? body.preset : null;
-          const name = typeof body.name === "string" && body.name.trim()
-            ? body.name.trim()
-            : null;
           if (!dir || !preset) {
             return json(400, { error: "Both 'dir' and 'preset' are required" });
           }
@@ -374,7 +371,17 @@ class Supervisor {
           if (!existsSync(dir) || !statSync(dir).isDirectory()) {
             return json(400, { error: `Not a directory: ${dir}` });
           }
-          const entry = { dir, preset, ...(name ? { name } : {}) };
+          // Unnamed adds get a generated identity (<preset>-<hex6>),
+          // PERSISTED in the state file: identity must be stable
+          // across boots (generating per-boot would orphan the
+          // Voir agent on every restart). Generated once, at add
+          // time — hand-written state entries without a name keep
+          // the preset as their identity.
+          const name =
+            typeof body.name === "string" && body.name.trim()
+              ? body.name.trim()
+              : randomName(preset);
+          const entry = { dir, preset, name };
           const key = this.entryKey(entry);
           if (this.agents.some((e) => this.entryKey(e) === key)) {
             return json(409, { error: `Agent ${JSON.stringify(key)} already exists` });
@@ -605,10 +612,12 @@ async function main() {
     }
     const agents = readJson(paths.state, []);
     if (!Array.isArray(agents)) die(`invalid state file at ${paths.state}`, 1);
+    // Same rule as the API: unnamed adds get a generated identity,
+    // persisted so it survives boots.
     agents.push({
       dir: dir.replace(/~\/?/, homedir()),
       preset: flags.preset,
-      ...(flags.name ? { name: flags.name } : {}),
+      name: flags.name ?? randomName(flags.preset),
     });
     atomicWriteJson(paths.state, agents);
     console.log(

@@ -142,6 +142,111 @@ test("voir-supervisor: refuses a config path that collides with its own discover
   assert.equal(after.ui, "http://localhost:9");
 });
 
+test("voir-supervisor: unnamed adds get generated, persisted identities", async () => {
+  const workdir = await mkdtemp(join(tmpdir(), "voir-sup4-"));
+  const configPath = join(workdir, "config.json");
+  const statePath = join(workdir, "agents.json");
+  const apiPort = await findFreePort();
+
+  const stub = await startStubVoir();
+  const stubUrl = `http://127.0.0.1:${(stub.server.address() as { port: number }).port}`;
+  await writeFile(
+    configPath,
+    JSON.stringify({ ui: stubUrl, presets: { mock: `node ${join(ROOT, "bin/mock-acp.mjs")}` } }),
+  );
+  await writeFile(statePath, "[]");
+
+  const sup = startSupervisor(configPath, statePath, apiPort);
+  try {
+    const api = `http://127.0.0.1:${apiPort}`;
+    assert(
+      await until(() =>
+        (async () => {
+          try {
+            const res = await fetch(`${api}/health`);
+            return res.ok;
+          } catch {
+            return false;
+          }
+        })(),
+      ),
+      "daemon never came up",
+    );
+
+    // Two unnamed adds, same preset, same dir: distinct generated
+    // identities (mock-<hex6>), both persisted in the state file.
+    const r1 = await (await fetch(`${api}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir: workdir, preset: "mock" }),
+    })).json() as { name: string };
+    const r2 = await (await fetch(`${api}/agents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir: workdir, preset: "mock" }),
+    })).json() as { name: string };
+    assert.match(r1.name, /^mock-[0-9a-f]{6}$/, "generated name should be <preset>-<hex6>");
+    assert.match(r2.name, /^mock-[0-9a-f]{6}$/);
+    assert.notEqual(r1.name, r2.name, "two unnamed adds must not collide");
+
+    // Both are persisted in the state file (identity survives boots).
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Array<{ name?: string }>;
+    assert.deepEqual(
+      state.map((e) => e.name).sort(),
+      [r1.name, r2.name].sort(),
+    );
+
+    // Both registered with Voir under their generated names.
+    assert(
+      await until(() =>
+        stub.registrations.some((r) => r.agentName === r1.name) &&
+        stub.registrations.some((r) => r.agentName === r2.name),
+      ),
+      "generated-name agents never registered",
+    );
+  } finally {
+    sup.kill("SIGTERM");
+    await sleep(300);
+    sup.kill("SIGKILL");
+    stub.server.close();
+    stub.server.closeAllConnections();
+  }
+});
+
+test("acp-spawn: no --name registers a generated identity", async () => {
+  const workdir = await mkdtemp(join(tmpdir(), "voir-spawn-noname-"));
+  const stub = await startStubVoir();
+  const stubUrl = `http://127.0.0.1:${(stub.server.address() as { port: number }).port}`;
+
+  const child = spawn(process.execPath, [
+    join(ROOT, "bin/acp-spawn.mjs"),
+    "--agent", `node ${join(ROOT, "bin/mock-acp.mjs")}`,
+    "--ui", stubUrl,
+  ], { cwd: workdir, stdio: ["ignore", "pipe", "pipe"] });
+
+  try {
+    assert(
+      await until(() =>
+        stub.registrations.some(
+          (r) => typeof r.agentName === "string" && /^agent-[0-9a-f]{6}$/.test(r.agentName),
+        ),
+      ),
+      "unnamed spawn never registered with a generated name",
+    );
+    const reg = stub.registrations.find(
+      (r) => typeof r.agentName === "string" && /^agent-[0-9a-f]{6}$/.test(r.agentName),
+    )!;
+    assert.equal(reg.method, "POST");
+    assert.equal(reg.path, workdir);
+  } finally {
+    child.kill("SIGTERM");
+    await sleep(300);
+    child.kill("SIGKILL");
+    stub.server.close();
+    stub.server.closeAllConnections();
+  }
+});
+
 test("voir-supervisor: a second daemon on the same port dies cleanly", async () => {
   const workdir = await mkdtemp(join(tmpdir(), "voir-sup2-"));
   const configPath = join(workdir, "config.json");

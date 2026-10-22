@@ -23,7 +23,9 @@ wrapped command.
 
 ```sh
 cd /home/me/worktrees/feat-42
-acp-spawn --agent pi-acp --name pi --ui http://localhost:9000
+acp-spawn --agent pi-acp --ui http://localhost:9000
+# --name is optional: omitted, a random agent-<hex6> identity is
+# generated, so several ad-hoc agents can share a worktree.
 ```
 
 That spawns `pi-acp` in the current directory, picks a free port,

@@ -25,6 +25,18 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { Buffer } from "node:buffer";
+import { randomBytes } from "node:crypto";
+
+/**
+ * A short generated agent name: `agent-<6 hex>`. Unique enough
+ * for the handful of agents one machine runs; the point is that
+ * unnamed spawns get distinct identities (Voir keys agents by
+ * path + name), so two ad-hoc agents in one worktree coexist
+ * without anyone having to invent names.
+ */
+export function randomName(prefix = "agent") {
+  return `${prefix}-${randomBytes(3).toString("hex")}`;
+}
 
 // -----------------------------------------------------------------------
 // Ports and URLs

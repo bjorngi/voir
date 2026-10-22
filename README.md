@@ -141,8 +141,10 @@ every hunk, plus uncommitted edits.
 ### 4. Add more chats
 
 Every worktree is its own chat. Just `cd` somewhere else and start
-another launcher with a different `--name`. The folder list grows; the
-sessions don't share state.
+another launcher. The folder list grows; the sessions don't share
+state. `--name` is optional — omitted, a random `agent-<hex6>`
+identity is generated, so several agents can even share one
+worktree without colliding.
 
 ```sh
 cd ~/worktrees/other-thing

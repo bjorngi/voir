@@ -12,7 +12,8 @@
 //
 // Flags:
 //   --agent <cmd>     agent to spawn (required)
-//   --name <name>     label shown in the UI (required)
+//   --name <name>     label shown in the UI (optional — a random
+//                     agent-<hex> name is generated when omitted)
 //   --ui   <url>      UI / orchestrator base URL (required)
 //   --port <n>        explicit port (default: pick a free one)
 //   --no-register     start the bridge only, don't talk to the UI
@@ -32,6 +33,7 @@
 import {
   launchAgent,
   createRegistrar,
+  randomName,
 } from "./acp-lib.mjs";
 
 /**
@@ -94,18 +96,21 @@ function parseArgs(argv) {
   }
   const missing = [];
   if (!opts.agent) missing.push("--agent");
-  if (!opts.name) missing.push("--name");
   if (!opts.ui) missing.push("--ui");
   if (missing.length > 0) {
     console.error(`missing required flag(s): ${missing.join(", ")}`);
     printHelp();
     exitAfterFlush(2);
   }
+  // --name is optional: unnamed spawns get a generated identity
+  // (agent-<6 hex>), so several ad-hoc agents can share a
+  // worktree without anyone inventing names.
+  opts.name ??= randomName();
   return opts;
 }
 
 function printHelp() {
-  console.log(`Usage: acp-spawn --agent <spec> --name <name> --ui <url> [options]
+  console.log(`Usage: acp-spawn --agent <spec> [--name <name>] --ui <url> [options]
 
 Spawns an ACP-compatible agent in the current directory, exposes it as an
 ACP JSON-RPC 2.0 HTTP endpoint, and registers it with the UI / orchestrator
@@ -114,7 +119,8 @@ at --ui.
 Options:
   --agent <spec>    agent command + args     (required)
                     split on whitespace, e.g. --agent "opencode acp"
-  --name <name>     display name in the UI   (required)
+  --name <name>     display name in the UI
+                                       [default: generated agent-<6 hex>]
   --ui   <url>      UI / orchestrator base URL (required)
                     used to POST /api/folders and DELETE on shutdown
   --port <n>        local bridge port        [default: pick a free port]

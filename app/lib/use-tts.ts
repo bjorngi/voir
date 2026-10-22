@@ -34,11 +34,16 @@ export interface Tts {
   supported: boolean;
   /** Which engine is live right now. */
   engine: "neural" | "browser" | null;
+  /** Neural voices the server accepts (the settings-drawer picker). */
+  voices: Array<{ id: string; label: string }>;
+  /** Server-default neural voice id, or null. */
+  defaultVoice: string | null;
   enabled: boolean;
   setEnabled: (v: boolean) => void;
   /** Speak text. No-op when disabled unless `force` (voice mode
-   *  narrates even with the global toggle off). */
-  speak: (text: string, opts?: { force?: boolean }) => void;
+   *  narrates even with the global toggle off). `voice` overrides
+   *  the neural voice for this utterance (the picker's preview). */
+  speak: (text: string, opts?: { force?: boolean; voice?: string }) => void;
   /** Drop the utterance queue, including anything mid-speech. */
   cancel: () => void;
   /** Whether audio is queued, in flight, or scheduled to play. */
@@ -51,6 +56,8 @@ export function useSpeechSynthesis(): Tts {
   const [enabled, setEnabledState] = useState(false);
   const [browserTts, setBrowserTts] = useState(false);
   const [neuralTts, setNeuralTts] = useState(false);
+  const [voices, setVoices] = useState<Array<{ id: string; label: string }>>([]);
+  const [defaultVoice, setDefaultVoice] = useState<string | null>(null);
 
   // Engine discovery post-mount: server config decides neural,
   // window decides the fallback. SSR renders neither.
@@ -59,9 +66,19 @@ export function useSpeechSynthesis(): Tts {
     setBrowserTts(hasBrowser);
     fetch("/api/tts")
       .then((r) => (r.ok ? r.json() : null))
-      .then((cfg: { provider?: string } | null) => {
-        if (cfg?.provider === "deepgram") setNeuralTts(true);
-      })
+      .then(
+        (cfg: {
+          provider?: string;
+          model?: string;
+          voices?: Array<{ id: string; label: string }>;
+        } | null) => {
+          if (cfg?.provider === "deepgram") {
+            setNeuralTts(true);
+            setVoices(cfg.voices ?? []);
+            setDefaultVoice(cfg.model ?? null);
+          }
+        },
+      )
       .catch(() => {});
   }, []);
 
@@ -88,7 +105,7 @@ export function useSpeechSynthesis(): Tts {
   // ------------------------------------------------------------------
   const wsRef = useRef<WebSocket | null>(null);
   const actxRef = useRef<AudioContext | null>(null);
-  const queueRef = useRef<string[]>([]);
+  const queueRef = useRef<Array<{ text: string; voice?: string }>>([]);
   const inFlightRef = useRef(false);
   const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartRef = useRef(0);
@@ -184,8 +201,8 @@ export function useSpeechSynthesis(): Tts {
   const pumpRef = useRef<() => void>(() => {});
 
   const speakNeural = useCallback(
-    (text: string) => {
-      queueRef.current.push(text);
+    (text: string, voice?: string) => {
+      queueRef.current.push({ text, voice });
       pumpRef.current();
     },
     [],
@@ -204,7 +221,14 @@ export function useSpeechSynthesis(): Tts {
       inFlightRef.current = false;
       return;
     }
-    const send = () => ws.send(JSON.stringify({ type: "speak", text: next }));
+    const send = () =>
+      ws.send(
+        JSON.stringify({
+          type: "speak",
+          text: next.text,
+          ...(next.voice ? { voice: next.voice } : {}),
+        }),
+      );
     if (ws.readyState === WebSocket.OPEN) send();
     else ws.onopen = () => send();
   };
@@ -226,12 +250,12 @@ export function useSpeechSynthesis(): Tts {
   }, []);
 
   const speak = useCallback(
-    (text: string, sopts?: { force?: boolean }) => {
+    (text: string, sopts?: { force?: boolean; voice?: string }) => {
       if (!text) return;
       if (!enabledRef.current && !sopts?.force) return;
       if (neuralRef.current) {
         preparePlayback();
-        speakNeural(text);
+        speakNeural(text, sopts?.voice);
         return;
       }
       if ("speechSynthesis" in window) {
@@ -268,6 +292,8 @@ export function useSpeechSynthesis(): Tts {
   return {
     supported: neuralTts || browserTts,
     engine: neuralTts ? "neural" : browserTts ? "browser" : null,
+    voices,
+    defaultVoice,
     enabled,
     setEnabled,
     speak,

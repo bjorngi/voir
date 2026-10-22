@@ -15,6 +15,7 @@ import { streamUrl, sessionUrl } from "~/lib/urls";
 import { useAutoScroll, usePageVisible } from "~/lib/hooks";
 import type { Tts } from "~/lib/use-tts";
 import { useVoiceMode } from "~/lib/use-voice";
+import { useVoicePrefs, AUTO_SEND_MS } from "~/lib/voice-settings";
 import { MessageBubble } from "~/components/Message";
 import { Composer } from "~/components/Composer";
 import { ModelDrawer, usePendingSet } from "~/components/ModelDrawer";
@@ -324,10 +325,19 @@ export function ChatView({
     text: string;
     seq: number;
   } | null>(null);
+  // Voice panel settings (voice picker, narrate, auto-send),
+  // persisted in localStorage.
+  const {
+    prefs: voicePrefs,
+    setTtsVoice: setVoiceTtsVoice,
+    setNarrate: setVoiceNarrate,
+    setAutoSend: setVoiceAutoSend,
+  } = useVoicePrefs();
   const voice = useVoiceMode({
     busy,
     ttsSpeaking: () => tts.speaking(),
     ttsCancel: () => tts.cancel(),
+    autoSendMs: AUTO_SEND_MS[voicePrefs.autoSend],
     onSend: async (text) => {
       const body = new FormData();
       body.set("intent", "send");
@@ -420,15 +430,22 @@ export function ChatView({
         if (cut > 0) {
           spokenChars.current.set(m.id, spoken + cut);
           tts.speak(text.slice(spoken, spoken + cut).trim(), {
-            force: voice.active,
+            // Voice mode narrates per the panel's Narrate setting
+            // and with the picker's voice; Read aloud uses the
+            // default voice and the global toggle.
+            force: voice.active && voicePrefs.narrate,
+            voice: voicePrefs.ttsVoice ?? undefined,
           });
         }
       } else {
         spokenChars.current.set(m.id, text.length);
-        tts.speak(text.slice(spoken).trim(), { force: voice.active });
+        tts.speak(text.slice(spoken).trim(), {
+          force: voice.active && voicePrefs.narrate,
+          voice: voicePrefs.ttsVoice ?? undefined,
+        });
       }
     }
-  }, [messages, tts, voice.active]);
+  }, [messages, tts, voice.active, voicePrefs.narrate, voicePrefs.ttsVoice]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -455,7 +472,14 @@ export function ChatView({
         /* Voice conversation mode owns the input area: the composer
            is replaced by the voice panel (mic orb, live transcript,
            contextual tap). The message list above stays live. */
-        <VoicePanel voice={voice} />
+        <VoicePanel
+          voice={voice}
+          tts={tts}
+          prefs={voicePrefs}
+          setTtsVoice={setVoiceTtsVoice}
+          setNarrate={setVoiceNarrate}
+          setAutoSend={setVoiceAutoSend}
+        />
       ) : (
         <>
           {/* A voice-mode failure that ended the mode (mic denied,

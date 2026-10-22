@@ -270,6 +270,14 @@ Three voice affordances, in increasing ambition:
   (the noticeably synthetic voices) — set
   `VOICE_TTS_PROVIDER=browser` to force that even with a key.
 
+  The panel's **settings drawer** (the gear next to Done) holds
+  the voice settings: the narration **voice picker** with a
+  preview button, **narrate replies on/off** (silent voice mode),
+  and the **auto-send** review window (1s / 2.5s / 5s / manual —
+  manual shows Send/Edit buttons instead of a countdown). The
+  **Pause** button mutes the mic without leaving voice mode.
+  All persisted in localStorage.
+
 ## Security: this is your job
 
 Voir is **not secured**. Out of the box it:

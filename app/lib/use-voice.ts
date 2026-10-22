@@ -42,6 +42,8 @@ export interface VoiceHandle {
   interim: string;
   /** When the auto-send countdown started (Date.now()), or null. */
   reviewStartedAt: number | null;
+  /** Mic muted without leaving voice mode (Pause button). */
+  paused: boolean;
   error: string | null;
   start: () => void;
   stop: () => void;
@@ -49,8 +51,16 @@ export interface VoiceHandle {
   editNow: () => void;
   /** During thinking/speaking: interrupt — stop narration, listen. */
   bargeIn: () => void;
-  /** Nudge a suspended audio context back to running (Android). */
+  /** Mute the mic without closing the panel; cancels a pending
+   *  auto-send countdown so the draft keeps accumulating. */
+  pause: () => void;
+  /** Re-open the mic (no-op if not paused). */
   resume: () => void;
+  /** Send the draft immediately (manual auto-send mode, or just
+   *  “send now” during the review window). */
+  sendNow: () => void;
+  /** Nudge a suspended audio context back to running (Android). */
+  resumeAudio: () => void;
   /** Diagnostics for the debug line: frames sent, transport and
    *  context state, last provider event. */
   getStats: () => {
@@ -73,6 +83,10 @@ export function useVoiceMode(opts: {
   ttsCancel: () => void;
   /** Voice mode exited to edit: hand the transcript to the composer. */
   onExitToEdit: (text: string) => void;
+  /** Auto-send review window in ms (0 = manual: stay in the review
+   *  phase until the user sends/edits). Read live via the options
+   *  ref, so the settings drawer takes effect immediately. */
+  autoSendMs?: number;
 }): VoiceHandle {
   const optsRef = useRef(opts);
   optsRef.current = opts;
@@ -87,6 +101,7 @@ export function useVoiceMode(opts: {
   }, []);
 
   const [phase, setPhase] = useState<VoicePhase>("off");
+  const [paused, setPaused] = useState(false);
   const [draft, setDraft] = useState("");
   const [interim, setInterim] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +154,7 @@ export function useVoiceMode(opts: {
     setDraft("");
     setInterim("");
     setReviewStartedAt(null);
+    clearReviewTimer();
     if (!t) return;
     setPhase("sending");
     optsRef.current.onSend(t).catch(() => {
@@ -153,17 +169,20 @@ export function useVoiceMode(opts: {
     }
   };
 
-  /** Enter the reviewing state: countdown to auto-send. */
+  /** Enter the reviewing state: countdown to auto-send, or hold
+   *  (manual mode) until the user sends/edits. */
   const startReview = useCallback(() => {
     if (!draftRef.current.trim()) return;
     clearReviewTimer();
     setPhase("reviewing");
-    const startedAt = Date.now();
-    setReviewStartedAt(startedAt);
-    reviewTimerRef.current = setTimeout(() => {
-      reviewTimerRef.current = null;
-      sendText(draftRef.current);
-    }, REVIEW_MS);
+    setReviewStartedAt(Date.now());
+    const ms = optsRef.current.autoSendMs ?? REVIEW_MS;
+    if (ms > 0) {
+      reviewTimerRef.current = setTimeout(() => {
+        reviewTimerRef.current = null;
+        sendText(draftRef.current);
+      }, ms);
+    }
   }, [sendText]);
 
   const handleEvent = useCallback(
@@ -283,6 +302,7 @@ export function useVoiceMode(opts: {
     interimRef.current = "";
     attemptsRef.current = 0;
     setError(null);
+    setPaused(false);
     setDraft("");
     setInterim("");
     setReviewStartedAt(null);
@@ -370,13 +390,36 @@ export function useVoiceMode(opts: {
     setPhase((p) => (p === "thinking" || p === "speaking" ? "listening" : p));
   }, []);
 
+  /** Mute the mic without leaving voice mode. Cancels a pending
+   *  auto-send countdown so the draft keeps accumulating; the
+   *  mic stays off (and narration continues) until resumed. */
+  const pause = useCallback(() => {
+    clearReviewTimer();
+    setReviewStartedAt(null);
+    setPhase((p) => (p === "reviewing" ? "listening" : p));
+    setPaused(true);
+  }, []);
+
+  /** Re-open the mic after pause(). */
+  const unpause = useCallback(() => {
+    setPaused(false);
+    resumeAudioRef.current();
+  }, []);
+
+  /** Send the draft immediately (manual auto-send, or “send now”
+   *  during the review window). */
+  const sendNow = useCallback(() => {
+    sendText(draftRef.current);
+  }, [sendText]);
+
   /** Nudge a suspended audio context back to running (Android). */
-  const resume = useCallback(() => {
+  const resumeAudio = useCallback(() => {
     const ctx = ctxRef.current;
     if (ctx && ctx.state === "suspended") {
       void ctx.resume().catch(() => {});
     }
   }, []);
+  const resumeAudioRef = useRef(resumeAudio);
 
   // Turn lifecycle: after a send, follow busy → narration → listen.
   // The POST resolves immediately (the SSE busy flag arrives a beat
@@ -421,19 +464,22 @@ export function useVoiceMode(opts: {
     return () => clearInterval(id);
   }, [phase]);
 
-  // Gate the mic by phase: capture only while the user can speak.
-  // Re-opening the mic is also the natural moment to nudge a
-  // suspended audio context back to running.
+  // Gate the mic by phase: capture only while the user can speak
+  // — and not while paused (the mic stays off through thinking /
+  //  speaking / narration-complete too, until resumed).
   const trackRef = useRef<MediaStreamTrack | null>(null);
   useEffect(() => {
     const track = streamRef.current?.getTracks()[0] ?? trackRef.current;
     if (track) {
       trackRef.current = track;
       track.enabled =
-        phase === "listening" || phase === "reviewing" || phase === "connecting";
-      if (track.enabled) resume();
+        !paused &&
+        (phase === "listening" ||
+          phase === "reviewing" ||
+          phase === "connecting");
+      if (track.enabled) resumeAudio();
     }
-  }, [phase, draft, resume]);
+  }, [phase, draft, paused, resumeAudio]);
 
   // Unmount: never leave a mic light on.
   useEffect(() => teardown, [teardown]);
@@ -445,12 +491,16 @@ export function useVoiceMode(opts: {
     draft,
     interim,
     reviewStartedAt,
+    paused,
     error,
     start,
     stop,
     editNow,
     bargeIn,
-    resume,
+    pause,
+    resume: unpause,
+    sendNow,
+    resumeAudio,
     getStats,
   };
 }

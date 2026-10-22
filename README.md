@@ -220,7 +220,9 @@ platform speech stack:
 - **Dictation (speech → text):** **press and hold the Send
   button** (hold ≥ ~250ms; works with the Queue button during a
   turn too). A live-transcription popup opens over the composer
-  while you talk; release and the transcript lands in the
+  while you talk — the on-screen keyboard collapses while
+  dictating and comes back on release, ready to edit. After a
+  brief "Transcribing…" flush the transcript lands in the
   composer as a reviewable draft — never auto-sent, since
   recognition makes mistakes and an agent turn is expensive. A
   short press still sends immediately. Requires a browser with

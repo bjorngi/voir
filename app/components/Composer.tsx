@@ -142,6 +142,11 @@ export function Composer({
   // preview lives in `interim` state for the overlay. Everything
   // commits exactly once in onStop, when the session really ends.
   const [dictating, setDictating] = useState(false);
+  // Mic stopped on release but the recognizer is still flushing
+  // its final transcript — the overlay switches from "listening"
+  // to a transcribing state instead of pretending nothing is
+  // happening for the ~a second the flush can take.
+  const [finishing, setFinishing] = useState(false);
   const [interim, setInterim] = useState("");
   const finalRef = useRef("");
   const interimRef = useRef("");
@@ -166,6 +171,7 @@ export function Composer({
       // flushed by stop() has been delivered by now; commit finals
       // plus whatever interim never finalized (e.g. "aborted").
       setDictating(false);
+      setFinishing(false);
       const transcript = appendFinal(finalRef.current, interimRef.current).trim();
       finalRef.current = "";
       interimRef.current = "";
@@ -189,11 +195,21 @@ export function Composer({
     finalRef.current = "";
     interimRef.current = "";
     setInterim("");
+    setFinishing(false);
     setDictating(true);
+    // Collapse the on-screen keyboard — the dictation popup owns
+    // the screen while you talk, and there's no reason the
+    // keyboard should eat half of it. Focus (and the keyboard)
+    // come back on commit, ready to edit the transcript.
+    ref.current?.blur();
     mic.start();
   };
 
   const stopDictation = () => {
+    // The recognizer takes a moment to flush its final after
+    // stop() — switch the overlay to the transcribing state while
+    // it lands instead of silently stalling.
+    setFinishing(true);
     mic.stop(); // transcript commits in onStop
   };
 
@@ -205,7 +221,10 @@ export function Composer({
   };
 
   const onSendPointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (!mic.supported) return; // no dictation here — plain press-to-send
+    // Ignore second fingers while a dictation or its final flush
+    // is in flight — a second hold would reset the transcript
+    // accumulator mid-commit.
+    if (!mic.supported || dictating || finishing) return;
     e.preventDefault(); // no focus steal, no tap highlight
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -222,11 +241,13 @@ export function Composer({
   const onSendPointerUp = () => {
     clearHold();
     if (holdingRef.current) {
+      // This is the release of the finger that started the hold.
       holdingRef.current = false;
       stopDictation();
-    } else {
-      send();
+      return;
     }
+    if (dictating || finishing) return; // stray tap during hold/flush
+    send();
   };
 
   const onSendPointerCancel = () => {
@@ -457,9 +478,12 @@ export function Composer({
           <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-amber-300">
             <span
               aria-hidden="true"
-              className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-400"
+              className={
+                "inline-block h-2 w-2 rounded-full bg-amber-400 " +
+                (finishing ? "opacity-60" : "animate-pulse")
+              }
             />
-            Listening — release to insert
+            {finishing ? "Transcribing…" : "Listening — release to insert"}
             {mic.error && (
               <span className="ml-auto normal-case tracking-normal text-rose-400">
                 {mic.error}
@@ -627,7 +651,7 @@ export function Composer({
                     : "border-neutral-700 bg-transparent text-neutral-600 active:bg-transparent")
             }
           >
-            {dictating ? "Listening…" : busy ? "Queue" : "Send"}
+            {dictating ? (finishing ? "Transcribing…" : "Listening…") : busy ? "Queue" : "Send"}
           </button>
         </div>
     </div>

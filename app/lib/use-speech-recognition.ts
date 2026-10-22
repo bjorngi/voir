@@ -84,6 +84,18 @@ export function useSpeechRecognition(opts: {
   // recognition session. -1 = none yet. Guards against recognizers
   // re-delivering final results (see onresult).
   const finalIdxRef = useRef(-1);
+  // Reliable onStop delivery: activeRef tracks whether a
+  // recognition session is running; stoppedRef makes fireOnStop
+  // idempotent (exactly one onStop per start, no matter how the
+  // session ends — stop(), rejected restart, fatal error, or the
+  // grace timer below).
+  const activeRef = useRef(false);
+  const stoppedRef = useRef(true);
+  const fireOnStop = useCallback(() => {
+    if (stoppedRef.current) return;
+    stoppedRef.current = true;
+    optsRef.current.onStop?.();
+  }, []);
   // True between user taps (want to listen) vs. the recognition
   // session actually running (may flap as restarts occur).
   const wantRef = useRef(false);
@@ -110,6 +122,7 @@ export function useSpeechRecognition(opts: {
 
     rec.onstart = () => {
       setListening(true);
+      activeRef.current = true;
       // Per-session bookkeeping: result indexes of finals already
       // appended (see onresult). Resets on every (re)start, since
       // a new recognition session starts its results array over.
@@ -117,19 +130,20 @@ export function useSpeechRecognition(opts: {
     };
     rec.onend = () => {
       setListening(false);
+      activeRef.current = false;
       if (wantRef.current) {
         try {
           rec.start();
         } catch {
           // Restart without a user gesture (iOS) — end quietly.
           wantRef.current = false;
-          optsRef.current.onStop?.();
+          fireOnStop();
         }
       } else {
         // Stopped for good (or never started). Any final flushed
         // by stop() has been delivered by now — see the ordering
         // note in onStop's doc comment.
-        optsRef.current.onStop?.();
+        fireOnStop();
       }
     };
     rec.onresult = (e) => {
@@ -159,6 +173,9 @@ export function useSpeechRecognition(opts: {
       if (e.error === "no-speech" || e.error === "aborted") return;
       setError(FRIENDLY_ERRORS[e.error] ?? `Speech error: ${e.error}`);
       wantRef.current = false;
+      // Some fatal error paths never reach onend — don't leave the
+      // caller's UI hanging in a listening state.
+      fireOnStop();
     };
     recRef.current = rec;
     return rec;
@@ -169,6 +186,7 @@ export function useSpeechRecognition(opts: {
     if (!rec) return;
     setError(null);
     wantRef.current = true;
+    stoppedRef.current = false;
     try {
       rec.start();
     } catch {
@@ -179,10 +197,26 @@ export function useSpeechRecognition(opts: {
   const stop = useCallback(() => {
     wantRef.current = false;
     setListening(false);
+    if (stoppedRef.current) return;
+    if (!activeRef.current) {
+      // The session already ended on its own (rejected restart,
+      // fatal error) — onend will not fire again. Commit now.
+      fireOnStop();
+      return;
+    }
     try {
       recRef.current?.stop();
-    } catch {}
-  }, []);
+    } catch {
+      fireOnStop();
+      return;
+    }
+    // stop() asks the recognizer to flush its pending final and
+    // end the session, which takes a moment on mobile — and some
+    // browsers never send onend at all. Arm a grace timer so the
+    // caller's UI can't hang waiting for the flush; fireOnStop
+    // is idempotent, so a late onend is harmless.
+    setTimeout(fireOnStop, 2_000);
+  }, [fireOnStop]);
 
   // Stop on unmount (or route change) so a stray session can't
   // keep the mic indicator lit in another view.

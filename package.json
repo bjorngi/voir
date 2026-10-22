@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "acp-spawn": "./bin/acp-spawn.mjs"
+    "acp-spawn": "./bin/acp-spawn.mjs",
+    "voir-supervisor": "./bin/voir-supervisor.mjs"
   },
   "scripts": {
     "build": "react-router build",

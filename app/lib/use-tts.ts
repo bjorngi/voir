@@ -25,10 +25,15 @@ export interface Tts {
   supported: boolean;
   enabled: boolean;
   setEnabled: (v: boolean) => void;
-  /** Speak text (no-op when disabled or unsupported). */
-  speak: (text: string) => void;
+  /** Speak text. No-op when disabled unless `force` (voice mode
+   *  narrates even with the global toggle off). */
+  speak: (text: string, opts?: { force?: boolean }) => void;
   /** Drop the utterance queue, including anything mid-speech. */
   cancel: () => void;
+  /** Whether an utterance is currently being spoken (or queued
+   *  mid-utterance). Poll-based; used by voice mode to follow the
+   *  narration before re-opening the mic. */
+  speaking: () => boolean;
 }
 
 export function useSpeechSynthesis(): Tts {
@@ -75,16 +80,22 @@ export function useSpeechSynthesis(): Tts {
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
 
-  const speak = useCallback((text: string) => {
-    if (!enabledRef.current || !("speechSynthesis" in window) || !text) return;
+  const speak = useCallback((text: string, sopts?: { force?: boolean }) => {
+    if (!("speechSynthesis" in window) || !text) return;
+    if (!enabledRef.current && !sopts?.force) return;
     const u = new SpeechSynthesisUtterance(text);
     u.lang = navigator.language;
     window.speechSynthesis.speak(u);
+  }, []);
+
+  const speaking = useCallback(() => {
+    if (!("speechSynthesis" in window)) return false;
+    return window.speechSynthesis.speaking || window.speechSynthesis.pending;
   }, []);
 
   // Leaving the chat must not leave a reply talking over the
   // folder list.
   useEffect(() => cancel(), [cancel]);
 
-  return { supported, enabled, setEnabled, speak, cancel };
+  return { supported, enabled, setEnabled, speak, cancel, speaking };
 }

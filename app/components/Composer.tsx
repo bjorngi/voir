@@ -93,6 +93,7 @@ export function Composer({
   onCancel,
   queueDepth = 0,
   commands: initialCommands = [],
+  injectText,
 }: {
   folder: string;
   sessionId: string;
@@ -116,10 +117,26 @@ export function Composer({
    * parent never re-renders (e.g. while a turn is in flight).
    */
   commands?: SlashCommand[];
+  /**
+   * Externally-injected draft (voice mode's tap-to-edit hands
+   * its transcript over). Applied whenever `seq` changes — the
+   * same text twice still re-injects, which is fine (it
+   * replaces, not appends).
+   */
+  injectText?: { text: string; seq: number };
 }) {
   const fetcher = useFetcher<{ error?: string; ok?: boolean }>();
   const [text, setText] = useState("");
   const [mentions, setMentions] = useState<Mention[]>([]);
+  // Externally-injected draft: apply on new seq, land focus so
+  // the keyboard is ready to fix the transcript.
+  const injectedSeq = useRef(0);
+  useEffect(() => {
+    if (!injectText || injectText.seq === injectedSeq.current) return;
+    injectedSeq.current = injectText.seq;
+    setText(injectText.text);
+    requestAnimationFrame(() => ref.current?.focus());
+  }, [injectText]);
   // Seed the slash-command list from the loader snapshot; the
   // chat will push live updates via the EventSource. We don't
   // need to fetch this ourselves — the loader has it.

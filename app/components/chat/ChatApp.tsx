@@ -3,7 +3,7 @@
  * Renders one of four sub-views based on the loader data:
  * folders tree, sessions list, chat, or changes.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ChatLoaderData } from "~/routes/chat";
 import { folderUrl, sessionUrl } from "~/lib/urls";
 import { shortPath } from "~/lib/format";
@@ -18,6 +18,18 @@ import { Header } from "./Header";
 
 export function ChatApp({ data }: { data: ChatLoaderData }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Voice conversation mode: the mode flag lives here (the Header
+  // renders the toggle), the actual machine lives in ChatView.
+  const [voiceActive, setVoiceActive] = useState(false);
+  // Mic capability — post-mount like the tts/mic detection, so SSR
+  // and hydration agree (the Voice button appears when capable).
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  useEffect(() => {
+    setVoiceSupported(
+      !!navigator.mediaDevices?.getUserMedia &&
+        typeof WebSocket !== "undefined",
+    );
+  }, []);
   // Spoken replies: the toggle lives in the header, the speaking
   // lives in the chat view. One hook instance for both — the
   // state is per-app, not per-view.
@@ -59,6 +71,14 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         label={label}
         busy={busy}
         onMenu={() => setPickerOpen(true)}
+        voice={
+          data.k === "chat" && voiceSupported
+            ? {
+                active: voiceActive,
+                onToggle: () => setVoiceActive((v) => !v),
+              }
+            : undefined
+        }
         tts={
           data.k === "chat" && tts.supported
             ? {
@@ -85,7 +105,14 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         {data.k === "sessions" && (
           <SessionsView data={data} onPick={() => setPickerOpen(false)} />
         )}
-        {data.k === "chat" && <ChatView data={data} tts={tts} />}
+        {data.k === "chat" && (
+          <ChatView
+            data={data}
+            tts={tts}
+            voiceActive={voiceActive}
+            onVoiceActiveChange={setVoiceActive}
+          />
+        )}
         {data.k === "changes" && (
           <ChangesView
             folder={data.folder.path}

@@ -5,6 +5,7 @@ import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
+import { attachVoiceServer } from "./app/lib/voice-server";
 
 export default defineConfig({
   plugins: [tailwindcss(), reactRouter(), tsconfigPaths(), tailscaleProxy()],
@@ -98,6 +99,12 @@ function tailscaleProxy(): Plugin {
         if (!addr || typeof addr === "string") return;
         const port = addr.port;
 
+        // Voice conversation mode: raw-mic WebSocket endpoint,
+        // only for upgrades at /api/voice — Vite's HMR socket is
+        // untouched (its handler only matches its own path).
+        // Dev-server-only: react-router-serve has no WS story.
+        const detachVoice = attachVoiceServer(httpServer);
+
         for (const ip of tailscaleIPv4s()) {
           const fwd = net.createServer((socket) => {
             const upstream = net.connect(port, "127.0.0.1");
@@ -137,7 +144,10 @@ function tailscaleProxy(): Plugin {
           );
         }
 
-        httpServer.on("close", closeForwarders);
+        httpServer.on("close", () => {
+          closeForwarders();
+          detachVoice();
+        });
       });
     },
   };

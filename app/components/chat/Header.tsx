@@ -9,6 +9,7 @@ export function Header({
   busy,
   onMenu,
   tts,
+  voice,
 }: {
   label: string;
   busy?: boolean;
@@ -16,6 +17,11 @@ export function Header({
   /** When present (chat view), renders the spoken-replies toggle. */
   tts?: {
     enabled: boolean;
+    onToggle: () => void;
+  };
+  /** When present (chat view), renders the voice-mode toggle. */
+  voice?: {
+    active: boolean;
     onToggle: () => void;
   };
 }) {
@@ -32,6 +38,38 @@ export function Header({
           {label}
         </span>
       </div>
+      {voice && (
+        <button
+          type="button"
+          onClick={voice.onToggle}
+          aria-pressed={voice.active}
+          aria-label="Toggle voice conversation mode"
+          title="Talk instead of typing — hands-free conversation"
+          className={
+            "inline-flex h-9 shrink-0 items-center gap-1.5 rounded px-2 active:bg-neutral-900 " +
+            (voice.active ? "text-amber-300" : "text-neutral-600")
+          }
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+            <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+            <line x1="12" y1="18" x2="12" y2="22" />
+          </svg>
+          <span className="text-[11px] font-mono uppercase tracking-wider">
+            Voice
+          </span>
+        </button>
+      )}
       {tts && (
         <button
           type="button"

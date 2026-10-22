@@ -11,16 +11,28 @@ import type {
   AvailableMode,
   ChatMessage,
 } from "~/lib/chat-types";
-import { streamUrl } from "~/lib/urls";
+import { streamUrl, sessionUrl } from "~/lib/urls";
 import { useAutoScroll, usePageVisible } from "~/lib/hooks";
 import type { Tts } from "~/lib/use-tts";
+import { useVoiceMode } from "~/lib/use-voice";
 import { MessageBubble } from "~/components/Message";
 import { Composer } from "~/components/Composer";
 import { ModelDrawer, usePendingSet } from "~/components/ModelDrawer";
+import { VoicePanel } from "./VoicePanel";
 
 type ChatData = Extract<ChatLoaderData, { k: "chat" }>;
 
-export function ChatView({ data, tts }: { data: ChatData; tts: Tts }) {
+export function ChatView({
+  data,
+  tts,
+  voiceActive,
+  onVoiceActiveChange,
+}: {
+  data: ChatData;
+  tts: Tts;
+  voiceActive: boolean;
+  onVoiceActiveChange: (v: boolean) => void;
+}) {
   const { folder, session: initial } = data;
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
   const [busy, setBusy] = useState(initial.busy);
@@ -302,6 +314,41 @@ export function ChatView({ data, tts }: { data: ChatData; tts: Tts }) {
   }, [folder.path, initial.id]);
 
   // ---------------------------------------------------------------------
+  // Voice conversation mode: hands-free talk → transcribe →
+  // auto-send → spoken reply → listen again. The header toggle
+  // (ChatApp) flips `voiceActive`; the hook owns the mic capture,
+  // the /api/voice streaming transport, and the phase machine.
+  // When the hook exits on its own (edit tap, Esc, fatal error) it
+  // syncs the flag back down.
+  const [voiceDraft, setVoiceDraft] = useState<{
+    text: string;
+    seq: number;
+  } | null>(null);
+  const voice = useVoiceMode({
+    busy,
+    ttsSpeaking: () => tts.speaking(),
+    ttsCancel: () => tts.cancel(),
+    onSend: async (text) => {
+      const body = new FormData();
+      body.set("intent", "send");
+      body.set("payload", JSON.stringify({ text, resources: [] }));
+      const res = await fetch(sessionUrl(folder.path, initial.id), {
+        method: "post",
+        body,
+      });
+      if (!res.ok) throw new Error(`send failed: ${res.status}`);
+    },
+    onExitToEdit: (text) => setVoiceDraft({ text, seq: Date.now() }),
+  });
+  useEffect(() => {
+    if (voiceActive && !voice.active) voice.start();
+    if (!voiceActive && voice.active) voice.stop();
+  }, [voiceActive, voice.active, voice.start, voice.stop]);
+  useEffect(() => {
+    if (!voice.active && voiceActive) onVoiceActiveChange(false);
+  }, [voice.active, voiceActive, onVoiceActiveChange]);
+
+  // ---------------------------------------------------------------------
   // Spoken replies (TTS): narrate agent text messages as they
   // stream — sentence by sentence so the voice tracks the text
   // instead of waiting for the whole turn. Per-message progress is
@@ -309,12 +356,14 @@ export function ChatView({ data, tts }: { data: ChatData; tts: Tts }) {
   // replacements and idempotent re-renders don't re-speak content.
   // The `tts` hook owns the toggle (header) and the utterance
   // queue; cancelling on user messages keeps turns from stacking
-  // audio on top of each other.
+  // audio on top of each other. Voice conversation mode forces
+  // narration on — a spoken conversation without spoken replies
+  // isn't one.
   const spokenChars = useRef(new Map<string, number>());
   const ttsSeeded = useRef(false);
   const prevUserCount = useRef(0);
   useEffect(() => {
-    if (!tts.enabled) return;
+    if (!tts.enabled && !voice.active) return;
     // Seed on first run (or on first run after enabling): mark
     // everything currently on screen as already spoken so we
     // never narrate history — only content that arrives from here
@@ -350,14 +399,16 @@ export function ChatView({ data, tts }: { data: ChatData; tts: Tts }) {
         const cut = sentenceEnd(text.slice(spoken));
         if (cut > 0) {
           spokenChars.current.set(m.id, spoken + cut);
-          tts.speak(text.slice(spoken, spoken + cut).trim());
+          tts.speak(text.slice(spoken, spoken + cut).trim(), {
+            force: voice.active,
+          });
         }
       } else {
         spokenChars.current.set(m.id, text.length);
-        tts.speak(text.slice(spoken).trim());
+        tts.speak(text.slice(spoken).trim(), { force: voice.active });
       }
     }
-  }, [messages, tts]);
+  }, [messages, tts, voice.active]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -380,54 +431,66 @@ export function ChatView({ data, tts }: { data: ChatData; tts: Tts }) {
           reason={connReason}
         />
       )}
-      {/*
-        The model/mode drawer is always mounted (when the
-        agent has advertised at least one of model or mode)
-        so the user has a visible chevron affordance to open
-        it. The actual panel below the chevron animates in
-        and out via CSS `grid-template-rows`; the chevron
-        itself stays put.
-      */}
-      {(availableModels.length > 0 || availableModes.length > 0) && (
-        <ModelDrawer
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          onToggle={() => setDrawerOpen((v) => !v)}
-          models={availableModels}
-          modes={availableModes}
-          currentModelId={currentModelId}
-          currentModeId={currentModeId}
-          pending={pending.pending}
-          onPicked={async (kind, v) => {
-            const action = kind === "model" ? "set_model" : "set_mode";
-            await sendAction(initial.id, folder.path, action, v);
-            if (kind === "model") setCurrentModelId(v);
-            else setCurrentModeId(v);
-            setDrawerOpen(false);
-          }}
-        />
+      {voice.active ? (
+        /* Voice conversation mode owns the input area: the composer
+           is replaced by the voice panel (mic orb, live transcript,
+           contextual tap). The message list above stays live. */
+        <VoicePanel voice={voice} />
+      ) : (
+        <>
+          {/*
+            The model/mode drawer is always mounted (when the
+            agent has advertised at least one of model or mode)
+            so the user has a visible chevron affordance to open
+            it. The actual panel below the chevron animates in
+            and out via CSS `grid-template-rows`; the chevron
+            itself stays put.
+          */}
+          {(availableModels.length > 0 || availableModes.length > 0) && (
+            <ModelDrawer
+              open={drawerOpen}
+              onClose={() => setDrawerOpen(false)}
+              onToggle={() => setDrawerOpen((v) => !v)}
+              models={availableModels}
+              modes={availableModes}
+              currentModelId={currentModelId}
+              currentModeId={currentModeId}
+              pending={pending.pending}
+              onPicked={async (kind, v) => {
+                const action = kind === "model" ? "set_model" : "set_mode";
+                await sendAction(initial.id, folder.path, action, v);
+                if (kind === "model") setCurrentModelId(v);
+                else setCurrentModeId(v);
+                setDrawerOpen(false);
+              }}
+            />
+          )}
+          <Composer
+            folder={folder.path}
+            sessionId={initial.id}
+            busy={busy}
+            queueDepth={queueDepth}
+            commands={commands}
+            // Voice mode's tap-to-edit hands the transcript back
+            // to the composer as a draft (seq makes it re-fire).
+            injectText={voiceDraft ?? undefined}
+            // Don't flip busy=true here — the server is the
+            // source of truth. It will broadcast a `busy:true`
+            // event when the prompt RPC actually starts the turn
+            // (or queues for the next one), and a `busy:false`
+            // when the turn ends. The send handler returns
+            // immediately.
+            onSent={() => {}}
+            onCancel={() => {
+              // Use the dedicated action endpoint rather than the
+              // chat action (intent=cancel) so the contract for
+              // "cancel a running turn" is a single well-known
+              // URL.
+              sendAction(initial.id, folder.path, "cancel").catch(() => {});
+            }}
+          />
+        </>
       )}
-      <Composer
-        folder={folder.path}
-        sessionId={initial.id}
-        busy={busy}
-        queueDepth={queueDepth}
-        commands={commands}
-        // Don't flip busy=true here — the server is the
-        // source of truth. It will broadcast a `busy:true`
-        // event when the prompt RPC actually starts the turn
-        // (or queues for the next one), and a `busy:false`
-        // when the turn ends. The send handler returns
-        // immediately.
-        onSent={() => {}}
-        onCancel={() => {
-          // Use the dedicated action endpoint rather than the
-          // chat action (intent=cancel) so the contract for
-          // "cancel a running turn" is a single well-known
-          // URL.
-          sendAction(initial.id, folder.path, "cancel").catch(() => {});
-        }}
-      />
     </div>
   );
 }

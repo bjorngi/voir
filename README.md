@@ -213,37 +213,56 @@ and `notificationclick` handlers land in `public/sw.js`.
 
 ## Voice
 
-Two affordances, both using the browser's built-in speech APIs —
-no extra services, no API keys, nothing leaves the device's
-platform speech stack:
+Three voice affordances, in increasing ambition:
 
 - **Dictation (speech → text):** **press and hold the Send
   button** (hold ≥ ~250ms; works with the Queue button during a
   turn too). A live-transcription popup opens over the composer
-  while you talk — the on-screen keyboard collapses while
-  dictating — the on-screen keyboard stays out of the way until
-  you tap the field yourself. After a
-  brief "Transcribing…" flush the transcript lands in the
-  composer as a reviewable draft — never auto-sent, since
-  recognition makes mistakes and an agent turn is expensive. A
-  short press still sends immediately. Requires a browser with
-  the Web Speech API (Chrome, Edge, Safari/iOS 14.5+; on Firefox
-  the hold does nothing and the button stays press-to-send) **and
-  a secure context** — over the tailnet that means the
-  `tailscale serve` HTTPS URL, not plain HTTP (see above).
-  Long silences don't end the session while you keep holding —
-  when the recognizer ends one anyway (browsers do), it is
-  restarted automatically, with retries riding out transient
-  dropouts; only a mic that stays dead through the retry budget
-  ends early ("Mic ended — release"). Release (or an incoming
-  call) commits what was said so far.
+  while you talk — the on-screen keyboard stays out of the way
+  until you tap the field yourself. After a brief "Transcribing…"
+  flush the transcript lands in the composer as a reviewable
+  draft — never auto-sent, since recognition makes mistakes and an
+  agent turn is expensive. A short press still sends immediately.
+  Uses the browser's built-in Web Speech API (Chrome, Edge,
+  Safari/iOS 14.5+; on Firefox the hold does nothing and the
+  button stays press-to-send) **and a secure context** — over the
+  tailnet that means the `tailscale serve` HTTPS URL, not plain
+  HTTP. Long silences don't end the session while you keep holding
+  — restarts retry through transient dropouts; only a mic that
+  stays dead through the retry budget ends early ("Mic ended —
+  release"). Release (or an incoming call) commits what was said
+  so far.
 - **Spoken replies (text → speech):** the **"Read aloud"** button
-  in the chat header — that's the speaker icon's label and its
-  whole job: when on, agent text messages are narrated as they
-  stream, sentence by sentence, so the voice tracks the text
-  instead of waiting for the turn to end. The choice persists in
+  in the chat header narrates agent text messages as they stream,
+  sentence by sentence, so the voice tracks the text instead of
+  waiting for the turn to end. The choice persists in
   localStorage; sending a new message cancels any still-queued
   audio so turns can't talk over each other.
+- **Voice conversation mode:** the **"Voice"** button in the
+  chat header — hands-free, ChatGPT-style. The mic streams raw
+  audio to the server (`/api/voice`), which relays it to a
+  streaming STT provider (API key in env, never in the browser)
+  and streams the transcript back. Pause when you're done and it
+  auto-sends after a short review window — tap the mic orb to
+  edit the transcript instead (fixing STT mistakes), or just keep
+  talking to continue the utterance. The reply is narrated
+  automatically (voice mode forces narration on), and when the
+  voice goes quiet the mic re-opens for the next turn — tap the
+  orb during thinking/speaking to interrupt. There are no browser
+  recognizer sessions in this pipeline, so nothing can
+  "MIC ENDED" mid-hold; a dropped connection reconnects with
+  backoff and the draft survives. Requires the same secure
+  context. Dev-server-only for now (`react-router-serve` has no
+  WebSocket story).
+
+  Providers (`VOICE_STT_PROVIDER`): `mock` (default — no key,
+  energy-based segmentation emits canned phrases so the whole
+  loop can be demoed; used by the docker compose dev stack) or
+  `deepgram` (real streaming transcription, needs
+  `VOICE_STT_API_KEY`; their VAD drives turn-taking).
+  Voice mode currently narrates with the browser's built-in
+  voices — a streaming neural TTS proxy is the natural next
+  step (same server-proxy pattern, needs a key pick).
 
 ## Security: this is your job
 

@@ -333,12 +333,20 @@ export function ChatView({
     setTtsSpeed: setVoiceTtsSpeed,
     setNarrate: setVoiceNarrate,
     setAutoSend: setVoiceAutoSend,
+    setAutoListen: setVoiceAutoListen,
+    setBargeIn: setVoiceBargeIn,
+    setSounds: setVoiceSounds,
+    setKeepAwake: setVoiceKeepAwake,
   } = useVoicePrefs();
   const voice = useVoiceMode({
     busy,
     ttsSpeaking: () => tts.speaking(),
     ttsCancel: () => tts.cancel(),
     autoSendMs: AUTO_SEND_MS[voicePrefs.autoSend],
+    autoListen: voicePrefs.autoListen,
+    sounds: voicePrefs.sounds,
+    keepAwake: voicePrefs.keepAwake,
+    bargeIn: voicePrefs.bargeIn,
     onSend: async (text) => {
       const body = new FormData();
       body.set("intent", "send");
@@ -483,6 +491,10 @@ export function ChatView({
           setTtsSpeed={setVoiceTtsSpeed}
           setNarrate={setVoiceNarrate}
           setAutoSend={setVoiceAutoSend}
+          setAutoListen={setVoiceAutoListen}
+          setBargeIn={setVoiceBargeIn}
+          setSounds={setVoiceSounds}
+          setKeepAwake={setVoiceKeepAwake}
         />
       ) : (
         <>

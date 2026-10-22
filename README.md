@@ -271,10 +271,16 @@ Three voice affordances, in increasing ambition:
   `VOICE_TTS_PROVIDER=browser` to force that even with a key.
 
   The panel's **settings drawer** (the gear next to Done) holds
-  the voice settings: the narration **voice picker** with a
-  preview button, **narrate replies on/off** (silent voice mode),
-  and the **auto-send** review window (1s / 2.5s / 5s / manual —
-  manual shows Send/Edit buttons instead of a countdown). The
+  all voice settings: the narration **voice picker** with a
+  preview button, narration **speed**, **narrate replies
+  on/off** (silent voice mode), the **auto-send** review window
+  (1s / 2.5s / 5s / manual — manual shows Send/Edit buttons
+  instead of a countdown), **auto-listen** (mic re-opens after
+  each reply, or pauses for tap-to-talk), **interrupt mode**
+  (tap the orb, or keep the mic live through narration so you can
+  just speak — headphones), **earcons** (subtle tones when the
+  mic opens / a message sends), and **keep screen awake** (Wake
+  Lock — the phone screen stays on for the conversation). The
   **Pause** button mutes the mic without leaving voice mode.
   All persisted in localStorage.
 

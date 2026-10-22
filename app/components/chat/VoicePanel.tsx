@@ -33,6 +33,10 @@ export function VoicePanel({
   setTtsSpeed,
   setNarrate,
   setAutoSend,
+  setAutoListen,
+  setBargeIn,
+  setSounds,
+  setKeepAwake,
 }: {
   voice: VoiceHandle;
   tts: Tts;
@@ -41,6 +45,10 @@ export function VoicePanel({
   setTtsSpeed: (v: number) => void;
   setNarrate: (v: boolean) => void;
   setAutoSend: (v: AutoSend) => void;
+  setAutoListen: (v: boolean) => void;
+  setBargeIn: (v: boolean) => void;
+  setSounds: (v: boolean) => void;
+  setKeepAwake: (v: boolean) => void;
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -254,6 +262,62 @@ export function VoicePanel({
                     <option value="normal">Normal — 2.5s</option>
                     <option value="slow">Slow — 5s</option>
                     <option value="manual">Manual — I tap Send</option>
+                  </select>
+                </label>
+
+                <label className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-widest text-neutral-500">
+                    Listen
+                  </span>
+                  <select
+                    value={prefs.autoListen ? "auto" : "tap"}
+                    onChange={(e) => setAutoListen(e.target.value === "auto")}
+                    className="h-9 min-w-0 flex-1 appearance-none border border-neutral-800 bg-neutral-900 px-2 font-mono text-[13px] text-neutral-100 outline-none focus:border-neutral-600"
+                  >
+                    <option value="auto">Auto — mic opens after each reply</option>
+                    <option value="tap">Tap to talk — pause between turns</option>
+                  </select>
+                </label>
+
+                <label className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-widest text-neutral-500">
+                    Interrupt
+                  </span>
+                  <select
+                    value={prefs.bargeIn ? "speak" : "tap"}
+                    onChange={(e) => setBargeIn(e.target.value === "speak")}
+                    className="h-9 min-w-0 flex-1 appearance-none border border-neutral-800 bg-neutral-900 px-2 font-mono text-[13px] text-neutral-100 outline-none focus:border-neutral-600"
+                  >
+                    <option value="tap">Tap the orb to interrupt</option>
+                    <option value="speak">Just speak — mic stays open (headphones)</option>
+                  </select>
+                </label>
+
+                <label className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-widest text-neutral-500">
+                    Sounds
+                  </span>
+                  <select
+                    value={prefs.sounds ? "on" : "off"}
+                    onChange={(e) => setSounds(e.target.value === "on")}
+                    className="h-9 min-w-0 flex-1 appearance-none border border-neutral-800 bg-neutral-900 px-2 font-mono text-[13px] text-neutral-100 outline-none focus:border-neutral-600"
+                  >
+                    <option value="on">On — tones when mic opens / sent</option>
+                    <option value="off">Silent</option>
+                  </select>
+                </label>
+
+                <label className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-widest text-neutral-500">
+                    Screen
+                  </span>
+                  <select
+                    value={prefs.keepAwake ? "on" : "off"}
+                    onChange={(e) => setKeepAwake(e.target.value === "on")}
+                    className="h-9 min-w-0 flex-1 appearance-none border border-neutral-800 bg-neutral-900 px-2 font-mono text-[13px] text-neutral-100 outline-none focus:border-neutral-600"
+                  >
+                    <option value="on">Keep on during voice mode</option>
+                    <option value="off">Allow sleep</option>
                   </select>
                 </label>
               </div>

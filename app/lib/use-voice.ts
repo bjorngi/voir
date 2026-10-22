@@ -32,6 +32,46 @@ export type VoicePhase =
 
 export const REVIEW_MS = 2500;
 
+// ---------------------------------------------------------------------
+// Earcons — synthesized, no assets. Subtle by design: they confirm
+// state changes for hands-free use ("mic live", "sent") without
+// competing with the conversation.
+// ---------------------------------------------------------------------
+
+/** [frequency, duration] note sequence. */
+type Tone = Array<[number, number]>;
+const LISTEN_TONE: Tone = [
+  [880, 0.09],
+  [1318.5, 0.12],
+];
+const SENT_TONE: Tone = [[659.25, 0.1]];
+
+function playTone(ctx: AudioContext, notes: Tone) {
+  if (ctx.state !== "running") return; // suspended context can't play
+  let t = ctx.currentTime + 0.01;
+  for (const [freq, dur] of notes) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.06, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+    t += dur;
+  }
+}
+
+// Wake Lock sentinel — minimal structural type (lib.dom's is
+// version-dependent).
+interface WakeLockSentinelLike {
+  released: boolean;
+  release(): Promise<void>;
+  addEventListener(type: "release", cb: () => void): void;
+}
+
 export interface VoiceHandle {
   supported: boolean;
   active: boolean;
@@ -87,6 +127,18 @@ export function useVoiceMode(opts: {
    *  phase until the user sends/edits). Read live via the options
    *  ref, so the settings drawer takes effect immediately. */
   autoSendMs?: number;
+  /** Mic re-opens after each reply (false = pause between turns,
+   *  tap the orb to talk). */
+  autoListen?: boolean;
+  /** Earcons: subtle tones when the mic opens / on send. */
+  sounds?: boolean;
+  /** Wake Lock while voice mode is active — keeps a hands-free
+   *  conversation alive past the screen timeout. */
+  keepAwake?: boolean;
+  /** Mic stays live during narration so you can interrupt by
+   *  voice. Use headphones — on speaker the narration feeds back
+   *  into the mic. */
+  bargeIn?: boolean;
 }): VoiceHandle {
   const optsRef = useRef(opts);
   optsRef.current = opts;
@@ -147,6 +199,43 @@ export function useVoiceMode(opts: {
     [],
   );
 
+  // Keep the screen awake while voice mode is on (Wake Lock;
+  // settings-gated). Wake Lock auto-releases when the page is
+  // hidden — re-request on visibility.
+  const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
+  const requestWakeLock = useCallback(async () => {
+    if (!optsRef.current.keepAwake) return;
+    const nav = navigator as Navigator & {
+      wakeLock?: { request(t: "screen"): Promise<WakeLockSentinelLike> };
+    };
+    if (!nav.wakeLock) return;
+    if (wakeLockRef.current && !wakeLockRef.current.released) return;
+    try {
+      const s = await nav.wakeLock.request("screen");
+      wakeLockRef.current = s;
+      s.addEventListener("release", () => {
+        if (wakeLockRef.current === s) wakeLockRef.current = null;
+      });
+    } catch {
+      // Denied / unsupported — the conversation just risks the
+      // screen timeout.
+    }
+  }, []);
+  useEffect(() => {
+    if (phase === "off" || !opts.keepAwake) {
+      const wl = wakeLockRef.current;
+      wakeLockRef.current = null;
+      if (wl && !wl.released) void wl.release().catch(() => {});
+      return;
+    }
+    void requestWakeLock();
+    const onVis = () => {
+      if (!document.hidden) void requestWakeLock();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [phase, opts.keepAwake, requestWakeLock]);
+
   const sendText = useCallback((text: string) => {
     const t = text.trim();
     draftRef.current = "";
@@ -156,6 +245,9 @@ export function useVoiceMode(opts: {
     setReviewStartedAt(null);
     clearReviewTimer();
     if (!t) return;
+    if (optsRef.current.sounds && ctxRef.current) {
+      playTone(ctxRef.current, SENT_TONE);
+    }
     setPhase("sending");
     optsRef.current.onSend(t).catch(() => {
       setError("Failed to send the message.");
@@ -200,11 +292,28 @@ export function useVoiceMode(opts: {
       switch (ev.type) {
         case "interim":
           cancelCountdown();
+          // Barge-in: speech arriving while the agent's reply is
+          // narrating silences the narration immediately — your
+          // voice shouldn't compete with the phone's speaker.
+          if (
+            optsRef.current.bargeIn &&
+            (phaseRef.current === "thinking" ||
+              phaseRef.current === "speaking")
+          ) {
+            optsRef.current.ttsCancel();
+          }
           interimRef.current = ev.text ?? "";
           setInterim(ev.text ?? "");
           break;
         case "final": {
           cancelCountdown();
+          if (
+            optsRef.current.bargeIn &&
+            (phaseRef.current === "thinking" ||
+              phaseRef.current === "speaking")
+          ) {
+            optsRef.current.ttsCancel();
+          }
           const t = (ev.text ?? "").trim();
           if (!t) return;
           draftRef.current = appendFinal(draftRef.current, t);
@@ -235,6 +344,9 @@ export function useVoiceMode(opts: {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    const wl = wakeLockRef.current;
+    wakeLockRef.current = null;
+    if (wl && !wl.released) void wl.release().catch(() => {});
     const ws = wsRef.current;
     wsRef.current = null;
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -386,6 +498,8 @@ export function useVoiceMode(opts: {
   const bargeIn = useCallback(() => {
     optsRef.current.ttsCancel();
     clearReviewTimer();
+    // Interrupting is explicit intent to talk — unpause.
+    setPaused(false);
     // Only meaningful from thinking/speaking — otherwise a no-op.
     setPhase((p) => (p === "thinking" || p === "speaking" ? "listening" : p));
   }, []);
@@ -440,7 +554,13 @@ export function useVoiceMode(opts: {
         setPhase((p) => (p === "thinking" ? "speaking" : p));
       } else {
         clearInterval(id);
+        // Turn complete. With auto-listen the conversation
+        // continues; without it the mic pauses until the user
+        // taps the orb — the state machine reuses `paused`, so
+        // every paused affordance (Resume button, orb tap)
+        // works unchanged.
         setPhase((p) => (p === "thinking" ? "listening" : p));
+        if (!optsRef.current.autoListen) setPaused(true);
       }
     }, 200);
     return () => clearInterval(id);
@@ -458,28 +578,43 @@ export function useVoiceMode(opts: {
       }
       if (!optsRef.current.ttsSpeaking()) {
         clearInterval(id);
+        // Narration finished — same auto-listen decision as above.
         setPhase("listening");
+        if (!optsRef.current.autoListen) setPaused(true);
       }
     }, 200);
     return () => clearInterval(id);
   }, [phase]);
 
-  // Gate the mic by phase: capture only while the user can speak
-  // — and not while paused (the mic stays off through thinking /
-  //  speaking / narration-complete too, until resumed).
+  // Gate the mic by phase: capture while the user can speak —
+  // and, when barge-in is on, also through the agent's turn so
+  // the user can interrupt the narration by voice. Paused mutes
+  // everything. The rising edge of "mic on" plays the listen
+  // earcon so hands-free use doesn't need eyes on the screen.
   const trackRef = useRef<MediaStreamTrack | null>(null);
+  const micOnRef = useRef(false);
   useEffect(() => {
     const track = streamRef.current?.getTracks()[0] ?? trackRef.current;
     if (track) {
       trackRef.current = track;
-      track.enabled =
+      const bargeIn = opts.bargeIn ?? false;
+      const sounds = opts.sounds ?? false;
+      const micOn =
         !paused &&
         (phase === "listening" ||
           phase === "reviewing" ||
-          phase === "connecting");
-      if (track.enabled) resumeAudio();
+          phase === "connecting" ||
+          (bargeIn && (phase === "thinking" || phase === "speaking")));
+      track.enabled = micOn;
+      if (micOn) {
+        resumeAudio();
+        if (!micOnRef.current && sounds && ctxRef.current) {
+          playTone(ctxRef.current, LISTEN_TONE);
+        }
+      }
+      micOnRef.current = micOn;
     }
-  }, [phase, draft, paused, resumeAudio]);
+  }, [phase, draft, paused, resumeAudio, opts.bargeIn, opts.sounds]);
 
   // Unmount: never leave a mic light on.
   useEffect(() => teardown, [teardown]);

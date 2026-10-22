@@ -29,6 +29,18 @@ export interface VoicePrefs {
   ttsSpeed: number;
   narrate: boolean;
   autoSend: AutoSend;
+  /** Mic re-opens automatically after each reply (off = pause
+   *  between turns, tap the orb to talk). */
+  autoListen: boolean;
+  /** Earcons — subtle tones when the mic opens and on send. */
+  sounds: boolean;
+  /** Wake Lock while voice mode is active — the phone screen
+   *  staying on is what keeps a hands-free conversation alive. */
+  keepAwake: boolean;
+  /** Mic stays live during narration so you can interrupt by
+   *  voice. Use headphones — on speaker the narration feeds back
+   *  into the mic. */
+  bargeIn: boolean;
 }
 
 const DEFAULTS: VoicePrefs = {
@@ -36,6 +48,10 @@ const DEFAULTS: VoicePrefs = {
   ttsSpeed: 1,
   narrate: true,
   autoSend: "normal",
+  autoListen: true,
+  sounds: true,
+  keepAwake: true,
+  bargeIn: false,
 };
 
 export function useVoicePrefs(): {
@@ -44,6 +60,10 @@ export function useVoicePrefs(): {
   setTtsSpeed: (v: number) => void;
   setNarrate: (v: boolean) => void;
   setAutoSend: (v: AutoSend) => void;
+  setAutoListen: (v: boolean) => void;
+  setSounds: (v: boolean) => void;
+  setKeepAwake: (v: boolean) => void;
+  setBargeIn: (v: boolean) => void;
 } {
   const [prefs, setPrefs] = useState<VoicePrefs>(DEFAULTS);
 
@@ -60,6 +80,11 @@ export function useVoicePrefs(): {
             ? parsed.ttsSpeed
             : p.ttsSpeed,
         narrate: typeof parsed.narrate === "boolean" ? parsed.narrate : p.narrate,
+        autoListen:
+          typeof parsed.autoListen === "boolean" ? parsed.autoListen : p.autoListen,
+        sounds: typeof parsed.sounds === "boolean" ? parsed.sounds : p.sounds,
+        keepAwake: typeof parsed.keepAwake === "boolean" ? parsed.keepAwake : p.keepAwake,
+        bargeIn: typeof parsed.bargeIn === "boolean" ? parsed.bargeIn : p.bargeIn,
         autoSend:
           parsed.autoSend === "fast" ||
           parsed.autoSend === "slow" ||
@@ -87,5 +112,9 @@ export function useVoicePrefs(): {
     setTtsSpeed: (v) => persist({ ...prefs, ttsSpeed: v }),
     setNarrate: (v) => persist({ ...prefs, narrate: v }),
     setAutoSend: (v) => persist({ ...prefs, autoSend: v }),
+    setAutoListen: (v) => persist({ ...prefs, autoListen: v }),
+    setSounds: (v) => persist({ ...prefs, sounds: v }),
+    setKeepAwake: (v) => persist({ ...prefs, keepAwake: v }),
+    setBargeIn: (v) => persist({ ...prefs, bargeIn: v }),
   };
 }

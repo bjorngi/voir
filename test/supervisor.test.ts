@@ -40,13 +40,16 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function until(cond: () => boolean, ms = 20_000) {
+async function until(
+  cond: () => boolean | Promise<boolean>,
+  ms = 20_000,
+) {
   const deadline = Date.now() + ms;
-  while (!cond()) {
+  for (;;) {
+    if (await cond()) return true;
     if (Date.now() > deadline) return false;
     await sleep(50);
   }
-  return true;
 }
 
 interface Registration {
@@ -115,9 +118,101 @@ function startSupervisor(
   );
 }
 
+test("voir-supervisor: refuses a config path that collides with its own discovery file", async () => {
+  const workdir = await mkdtemp(join(tmpdir(), "voir-sup3-"));
+  const statePath = join(workdir, "agents.json");
+  // The discovery file is always <state-dir>/supervisor.json; a
+  // config there would be overwritten on boot. The daemon must
+  // refuse instead of clobbering it.
+  const configPath = join(workdir, "supervisor.json");
+  await writeFile(configPath, JSON.stringify({ ui: "http://localhost:9", presets: {} }));
+  await writeFile(statePath, "[]");
+
+  const p = startSupervisor(configPath, statePath, await findFreePort());
+  const result = await new Promise<{ code: number | null; out: string }>((resolve) => {
+    let out = "";
+    p.stdout!.on("data", (d: Buffer) => (out += d.toString()));
+    p.stderr!.on("data", (d: Buffer) => (out += d.toString()));
+    p.on("close", (code) => resolve({ code, out }));
+  });
+  assert.notEqual(result.code, 0);
+  assert.match(result.out, /must not be the supervisor's own discovery file/);
+  // And the config file was not touched.
+  const after = JSON.parse(await readFile(configPath, "utf8")) as { ui: string };
+  assert.equal(after.ui, "http://localhost:9");
+});
+
+test("voir-supervisor: a second daemon on the same port dies cleanly", async () => {
+  const workdir = await mkdtemp(join(tmpdir(), "voir-sup2-"));
+  const configPath = join(workdir, "config.json");
+  const statePath = join(workdir, "agents.json");
+  const apiPort = await findFreePort();
+
+  const stub = await startStubVoir();
+  const stubUrl = `http://127.0.0.1:${(stub.server.address() as { port: number }).port}`;
+  await writeFile(
+    configPath,
+    JSON.stringify({ ui: stubUrl, presets: { mock: `node ${join(ROOT, "bin/mock-acp.mjs")}` } }),
+  );
+  await writeFile(statePath, "[]");
+
+  // Daemon A boots and listens.
+  const a = startSupervisor(configPath, statePath, apiPort);
+  let aOut = "";
+  a.stdout!.on("data", (b: Buffer) => (aOut += b.toString()));
+  assert(
+    await until(async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${apiPort}/health`);
+        return res.ok;
+      } catch {
+        return false;
+      }
+    }),
+    "daemon A never came up",
+  );
+
+  try {
+    // Daemon B on the same port: must exit non-zero with a clear
+    // message instead of crashing on an unhandled listen error
+    // and leaving a poisoned discovery file.
+    const b = startSupervisor(configPath, statePath, apiPort);
+    const bResult = await new Promise<{ code: number | null; out: string }>(
+      (resolve) => {
+        let out = "";
+        b.stdout!.on("data", (d: Buffer) => (out += d.toString()));
+        b.stderr!.on("data", (d: Buffer) => (out += d.toString()));
+        b.on("close", (code) => resolve({ code, out }));
+      },
+    );
+    assert.notEqual(bResult.code, 0, "daemon B should have exited");
+    assert.match(
+      bResult.out,
+      /port in use — is another voir-supervisor already running\?/,
+    );
+
+    // Daemon A is unaffected, and the discovery file still
+    // points at A (B never got to write it).
+    const health = await (await fetch(`http://127.0.0.1:${apiPort}/health`)).json() as {
+      ok: boolean;
+    };
+    assert.equal(health.ok, true);
+    const disc = JSON.parse(await readFile(join(workdir, "supervisor.json"), "utf8")) as {
+      pid: number;
+    };
+    assert.equal(disc.pid, a.pid, "discovery must still point at daemon A");
+  } finally {
+    a.kill("SIGTERM");
+    await sleep(300);
+    a.kill("SIGKILL");
+    stub.server.close();
+    stub.server.closeAllConnections();
+  }
+});
+
 test("voir-supervisor: converges a fleet, restarts crashes, honors rm", async () => {
   const workdir = await mkdtemp(join(tmpdir(), "voir-sup-"));
-  const configPath = join(workdir, "supervisor.json");
+  const configPath = join(workdir, "config.json");
   const statePath = join(workdir, "agents.json");
 
   const stub = await startStubVoir();

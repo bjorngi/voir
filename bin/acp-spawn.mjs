@@ -34,6 +34,21 @@ import {
   createRegistrar,
 } from "./acp-lib.mjs";
 
+/**
+ * console.* writes to pipes are asynchronous; a bare
+ * process.exit() right after can truncate the output (error
+ * messages, --help). Drain stdout+stderr, then exit. Throws a
+ * Fatal to unwind — an exit that only SCHEDULES lets execution
+ * continue past the call site until the callback fires.
+ */
+class Fatal extends Error {}
+function exitAfterFlush(code) {
+  process.stdout.write("", () =>
+    process.stderr.write("", () => process.exit(code)),
+  );
+  throw new Fatal(`exit(${code})`);
+}
+
 // -----------------------------------------------------------------------
 // Args
 // -----------------------------------------------------------------------
@@ -70,11 +85,11 @@ function parseArgs(argv) {
     else if (a === "--sse-lifetime") opts.sseLifetime = Number(argv[++i]);
     else if (a === "-h" || a === "--help") {
       printHelp();
-      process.exit(0);
+      exitAfterFlush(0);
     } else {
       console.error(`unknown flag: ${a}`);
       printHelp();
-      process.exit(2);
+      exitAfterFlush(2);
     }
   }
   const missing = [];
@@ -84,7 +99,7 @@ function parseArgs(argv) {
   if (missing.length > 0) {
     console.error(`missing required flag(s): ${missing.join(", ")}`);
     printHelp();
-    process.exit(2);
+    exitAfterFlush(2);
   }
   return opts;
 }
@@ -125,55 +140,67 @@ Environment (used as fallback for the corresponding flag):
 `);
 }
 
-const opts = parseArgs(process.argv.slice(2));
-const folder = process.cwd();
+async function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  const folder = process.cwd();
 
-// -----------------------------------------------------------------------
-// Launch + register
-// -----------------------------------------------------------------------
-let shuttingDown = false;
-let registrar = null;
-let agent = null;
+  // ---------------------------------------------------------------------
+  // Launch + register
+  // ---------------------------------------------------------------------
+  let shuttingDown = false;
+  let registrar = null;
+  let agent = null;
 
-async function shutdown(code = 0) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  try {
-    registrar?.stop();
-    await registrar?.unregister();
-  } catch {}
-  agent?.stop();
-  setTimeout(() => process.exit(code), 200);
-}
-
-agent = await launchAgent({
-  spec: opts.agent,
-  cwd: folder,
-  bind: opts.bind,
-  port: opts.port,
-  url: opts.url,
-  sseLifetime: opts.sseLifetime,
-  label: opts.name,
-  onChildExit: (code, signal) => {
+  async function shutdown(code = 0) {
     if (shuttingDown) return;
-    console.error(`[${opts.agent}] exited unexpectedly code=${code} signal=${signal}`);
-    shutdown(1);
-  },
-});
+    shuttingDown = true;
+    try {
+      registrar?.stop();
+      await registrar?.unregister();
+    } catch {}
+    agent?.stop();
+    setTimeout(() => process.exit(code), 200);
+  }
 
-console.log(`${opts.agent} bridge for ${folder} on ${agent.agentUrl}`);
-
-if (opts.register) {
-  registrar = createRegistrar({
-    ui: opts.ui,
-    folder,
-    agentUrl: agent.agentUrl,
-    agentName: opts.name,
+  agent = await launchAgent({
+    spec: opts.agent,
+    cwd: folder,
+    bind: opts.bind,
+    port: opts.port,
+    url: opts.url,
+    sseLifetime: opts.sseLifetime,
+    label: opts.name,
+    onChildExit: (code, signal) => {
+      if (shuttingDown) return;
+      console.error(
+        `[${opts.agent}] exited unexpectedly code=${code} signal=${signal}`,
+      );
+      shutdown(1);
+    },
   });
-  await registrar.register();
-  registrar.keepRegistered();
+
+  console.log(`${opts.agent} bridge for ${folder} on ${agent.agentUrl}`);
+
+  if (opts.register) {
+    registrar = createRegistrar({
+      ui: opts.ui,
+      folder,
+      agentUrl: agent.agentUrl,
+      agentName: opts.name,
+    });
+    await registrar.register();
+    registrar.keepRegistered();
+  }
+
+  for (const sig of ["SIGINT", "SIGTERM"]) {
+    process.on(sig, () => shutdown(0));
+  }
 }
 
-for (const sig of ["SIGINT", "SIGTERM"]) {
-  process.on(sig, () => shutdown(0));
-}
+main().catch((err) => {
+  // exitAfterFlush() already scheduled the exit; a Fatal here is
+  // the halt, not a failure to report.
+  if (err instanceof Fatal) return;
+  console.error(err?.stack || String(err));
+  process.exit(1);
+});

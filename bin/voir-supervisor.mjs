@@ -71,22 +71,35 @@ function atomicWriteJson(path, value) {
   renameSync(tmp, path);
 }
 
+/**
+ * A die()/exitAfterFlush() that only scheduled an async exit is
+ * not enough: execution would CONTINUE past the call site until
+ * the stderr write callback fires (the EADDRINUSE twin used
+ * that window to overwrite its sibling's discovery file). Throw
+ * a Fatal to unwind; main() swallows it — the exit is already
+ * scheduled by the flushed write.
+ */
+class Fatal extends Error {}
+
 function log(msg) {
   console.log(`[supervisor] ${msg}`);
 }
 
-function die(msg, code = 2) {
-  console.error(`[supervisor] ${msg}`);
-  process.exit(code);
+/**
+ * console.* writes to pipes are asynchronous; a bare
+ * process.exit() right after can truncate the message (the test
+ * harness spawns us with piped stdio). Drain first, then exit.
+ */
+function exitAfterFlush(code) {
+  process.stdout.write("", () =>
+    process.stderr.write("", () => process.exit(code)),
+  );
+  throw new Fatal(`exit(${code})`);
 }
 
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+function die(msg, code = 2) {
+  process.stderr.write(`[supervisor] ${msg}\n`, () => process.exit(code));
+  throw new Fatal(msg);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -388,7 +401,11 @@ class Supervisor {
         return json(500, { error: String(err?.message ?? err) });
       }
     });
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      // Reject on listen errors (EADDRINUSE …) instead of letting
+      // the process die with an unhandled event — the caller
+      // gets to die with a message instead.
+      server.once("error", reject);
       server.listen(this.apiPort, "127.0.0.1", () => resolve(server));
     });
   }
@@ -396,12 +413,43 @@ class Supervisor {
   async run() {
     this.configPath = this.configPathArg;
     this.loadState();
+    // The discovery file always lives next to the state file as
+    // "supervisor.json"; a config path that collides with it
+    // would be overwritten on boot. Refuse rather than clobber.
+    if (this.configPath === this.discoverPath()) {
+      die(
+        `config path must not be the supervisor's own discovery file ` +
+          `(${this.discoverPath()}); pick a different --config`,
+      );
+    }
+    // Listen BEFORE writing the discovery file: a boot that
+    // dies on the port must not leave a discovery record
+    // claiming a daemon that never came up (it poisons the CLI's
+    // "find a running daemon" lookup).
+    try {
+      this.apiServer = await this.startApi();
+    } catch (err) {
+      const code = err && typeof err === "object" && "code" in err ? err.code : null;
+      die(
+        `cannot listen on 127.0.0.1:${this.apiPort}: ` +
+          (code === "EADDRINUSE"
+            ? "port in use — is another voir-supervisor already running?"
+            : (err && err.message) || String(err)),
+        1,
+      );
+    }
+    // Any exit path — crash included — must not leave a stale
+    // discovery file behind.
+    process.on("exit", () => {
+      try {
+        unlinkSync(this.discoverPath());
+      } catch {}
+    });
     atomicWriteJson(this.discoverPath(), {
       pid: process.pid,
       port: this.apiPort,
       startedAt: this.startedAt,
     });
-    this.apiServer = await this.startApi();
     log(
       `api on http://127.0.0.1:${this.apiPort}` +
         (this.apiToken ? " (token required)" : ""),
@@ -416,7 +464,7 @@ class Supervisor {
         await this.shutdown();
         this.apiServer?.close();
         this.apiServer?.closeAllConnections?.();
-        process.exit(0);
+        exitAfterFlush(0);
       });
     }
   }
@@ -431,11 +479,16 @@ async function findDaemon(statePath) {
     join(dirname(statePath), "supervisor.json"),
     null,
   );
-  if (!disc || !pidAlive(disc.pid)) return null;
+  if (!disc || typeof disc.port !== "number") return null;
+  // Trust a responding /health over the recorded pid: a stale
+  // discovery file (a twin that died on the port) must not hide
+  // a healthy daemon that happens to listen on the same port.
+  // The health endpoint's shape is the daemon's own.
   try {
     const res = await fetch(`http://127.0.0.1:${disc.port}/health`);
     if (!res.ok) return null;
     const health = await res.json();
+    if (!health || health.ok !== true) return null;
     return { port: disc.port, health, token: null };
   } catch {
     return null;
@@ -464,7 +517,7 @@ function parseFlags(argv) {
     else if (a === "--api-port") flags.apiPort = Number(argv[++i]);
     else if (a === "-h" || a === "--help") {
       printHelp();
-      process.exit(0);
+      exitAfterFlush(0);
     } else positional.push(a);
   }
   return { flags, positional };
@@ -617,4 +670,9 @@ async function main() {
   die(`unknown command ${JSON.stringify(cmd)} (see --help)`);
 }
 
-main().catch((err) => die(err?.message ?? String(err), 1));
+main().catch((err) => {
+  // die()/exitAfterFlush() already scheduled the exit; a Fatal
+  // unwinding to here is the halt, not a failure to report.
+  if (err instanceof Fatal) return;
+  die(err?.message ?? String(err), 1);
+});

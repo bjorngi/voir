@@ -340,12 +340,26 @@ export function ChatView({
     },
     onExitToEdit: (text) => setVoiceDraft({ text, seq: Date.now() }),
   });
+  // The header toggle (ChatApp) owns the wanted-flag, the hook owns
+  // reality. Both directions must be EDGE-triggered: level-triggered
+  // logic made the two effects fight in the same commit — the
+  // sync-down saw "!active && wanted" before the phase state from
+  // start() landed, flipped the flag back off, and the next commit
+  // tore the whole session down. Symptom: mic flash, no panel, a
+  // dead-looking button. Edges fix it: start on the flag's rising
+  // edge only, sync down only on the hook's active falling edge.
+  const prevWantedRef = useRef(voiceActive);
   useEffect(() => {
-    if (voiceActive && !voice.active) voice.start();
-    if (!voiceActive && voice.active) voice.stop();
-  }, [voiceActive, voice.active, voice.start, voice.stop]);
+    if (voiceActive && !prevWantedRef.current) voice.start();
+    if (!voiceActive && prevWantedRef.current) voice.stop();
+    prevWantedRef.current = voiceActive;
+  }, [voiceActive, voice.start, voice.stop]);
+  const prevActiveRef = useRef(voice.active);
   useEffect(() => {
-    if (!voice.active && voiceActive) onVoiceActiveChange(false);
+    if (prevActiveRef.current && !voice.active && voiceActive) {
+      onVoiceActiveChange(false); // the hook exited on its own
+    }
+    prevActiveRef.current = voice.active;
   }, [voice.active, voiceActive, onVoiceActiveChange]);
 
   // ---------------------------------------------------------------------
@@ -438,6 +452,16 @@ export function ChatView({
         <VoicePanel voice={voice} />
       ) : (
         <>
+          {/* A voice-mode failure that ended the mode (mic denied,
+              connection lost) is only visible while the panel is up —
+              repeat the error above the composer so a dead-seeming
+              button is never unexplained. Cleared on the next Voice
+              tap (the hook clears on start). */}
+          {!voice.active && voice.error && (
+            <div className="px-3 pb-1 font-mono text-[11px] text-rose-400">
+              voice: {voice.error}
+            </div>
+          )}
           {/*
             The model/mode drawer is always mounted (when the
             agent has advertised at least one of model or mode)

@@ -1,0 +1,38 @@
+# Dependabot — automatic dependency upgrades.
+#
+# Weekly checks, one PR per dependency. Each PR is auto-merged by the
+# "auto-merge" job in .github/workflows/ci.yml once typecheck, build and
+# tests pass.
+version: 2
+
+updates:
+  # npm packages (package.json + package-lock.json)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+
+  # Node base image in the multi-stage Dockerfile (ARG NODE_VERSION=22)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  # Node images used by the dev services in docker-compose.yml
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  # Action versions referenced in .github/workflows/*.yml
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"

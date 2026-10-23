@@ -382,6 +382,14 @@ Voir is the chat.
 | `npm test` | Run unit tests (Node's built-in test runner) |
 | `npm run typecheck` | Generate route types and run `tsc` |
 
+## Automatic dependency updates
+
+[Dependabot](.github/dependabot.yml) checks npm packages, the Node Docker images
+and the GitHub Actions versions weekly, and opens one PR per update. Every PR
+runs [CI](.github/workflows/ci.yml) (typecheck → build → tests); when that's
+green the PR is squash-merged automatically. If a merge hits a lockfile
+conflict, CI asks Dependabot to rebase and retries — nothing to babysit.
+
 ## License
 
 MIT.

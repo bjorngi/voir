@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# New pushes to the same branch/PR cancel the previous run (saves minutes).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Typecheck, build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm run test
+
+  auto-merge:
+    # Dependabot PRs run the build-test job above. When it passes, squash-merge
+    # immediately — no repo settings or branch protection needed.
+    #
+    # Dependabot-triggered runs get a read-only GITHUB_TOKEN by default, but
+    # the permissions below raise it enough to merge (see
+    # https://docs.github.com/en/code-security/dependabot/troubleshooting-dependabot/troubleshooting-dependabot-on-github-actions).
+    name: Auto-merge Dependabot PR
+    needs: build-test
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Squash-merge after green CI
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh pr merge --squash --delete-branch "$PR_URL"; then
+            echo "Merged $PR_URL"
+          else
+            # Most likely a lockfile conflict with another Dependabot PR that
+            # merged first. Ask Dependabot to rebase; the rebase push
+            # re-triggers CI and this job runs again on the new head.
+            echo "Merge failed — asking Dependabot to rebase."
+            gh pr comment "$PR_URL" --body "@dependabot rebase"
+            exit 1
+          fi

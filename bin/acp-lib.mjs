@@ -281,14 +281,22 @@ const REREGISTER_INTERVAL_MS = 30_000;
  *   keepRegistered()    re-POST every 30s so a UI restart
  *                       self-heals (the UI keeps all state in
  *                       memory; the registration is the only
- *                       thing that went missing).
+ *                       thing that went missing). A failed
+ *                       re-POST is retried on the same cadence —
+ *                       only stop() halts the loop.
  *   async unregister()   best-effort DELETE on shutdown.
  *   stop()              stop the keep-alive loop (unregister is
  *                       still safe afterwards).
  *
  * State transitions are logged; routine re-registrations are not.
  */
-export function createRegistrar({ ui, folder, agentUrl, agentName }) {
+export function createRegistrar({
+  ui,
+  folder,
+  agentUrl,
+  agentName,
+  reregisterMs = REREGISTER_INTERVAL_MS,
+}) {
   let registered = false;
   let stopping = false;
   let timer = null;
@@ -327,7 +335,10 @@ export function createRegistrar({ ui, folder, agentUrl, agentName }) {
   const keepRegistered = () => {
     if (timer) return;
     timer = setInterval(() => {
-      if (stopping || !registered) return;
+      // The POST runs whether or not the last one failed: a
+      // lost registration must keep being retried until it
+      // lands. (`registered` gates only the transition logs.)
+      if (stopping) return;
       post()
         .then(() => {
           if (!registered) {
@@ -343,7 +354,7 @@ export function createRegistrar({ ui, folder, agentUrl, agentName }) {
             );
           }
         });
-    }, REREGISTER_INTERVAL_MS);
+    }, reregisterMs);
   };
 
   const unregister = async () => {

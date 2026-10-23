@@ -61,8 +61,11 @@ const port = Number(process.env.PORT ?? 9000);
 const host = process.env.HOST ?? "0.0.0.0";
 // The built bundle ships as plain JS without type declarations —
 // its module shape is the ServerBuild react-router/express expects
-// (the runtime check is the app working).
-const build = (await import("../build/server/index.js")) as unknown as ServerBuild;
+// (the runtime check is the app working). The specifier is kept
+// non-literal so `tsc` doesn't try to resolve the build artifact
+// during `npm run typecheck` on a fresh checkout without build/.
+const serverBuildPath = "../build/server/index.js";
+const build = (await import(serverBuildPath)) as unknown as ServerBuild;
 const log = (msg: string) =>
   console.log(new Date().toISOString().slice(11, 19), msg);
 

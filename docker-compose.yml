@@ -21,7 +21,7 @@
 # ──────────────────────────────────────────────────────────────────────
 services:
   web:
-    image: node:22-alpine
+    image: node:25-alpine
     working_dir: /app
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 9000"
     environment:
@@ -51,7 +51,7 @@ services:
       start_period: 60s
 
   mock-a:
-    image: node:22-alpine
+    image: node:25-alpine
     # Each mock mounts its worktree at a distinct, stable path
     # inside its own container. acp-spawn's $CWD becomes the path
     # Voir sees, so distinct paths → distinct folder entries in
@@ -86,7 +86,7 @@ services:
         condition: service_healthy
 
   mock-b:
-    image: node:22-alpine
+    image: node:25-alpine
     working_dir: /project-b
     command:
       - node

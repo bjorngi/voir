@@ -11,3 +11,5 @@ build
 
 # Push subscription registry (generated at runtime)
 dev-data/push-subscriptions.json
+# Session status store (the "Working on" shortlist)
+dev-data/session-status.json

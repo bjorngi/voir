@@ -1,22 +1,90 @@
 /**
  * The page header: a status dot + label, and the view toggles
- * on the right (voice-mode mic, push bell) that end in the
- * reload and menu buttons. The dot pulses amber while a turn
- * is in flight; otherwise it sits dim.
+ * on the right (working-on star, voice-mode mic, push bell)
+ * that end in the reload and menu buttons. The dot pulses
+ * amber while a turn is in flight; otherwise it sits dim.
  *
  * Installed-PWA affordances (there is no browser chrome to lean
  * on in standalone): a reload button, and — when `home` is set —
  * the label itself becomes a link back to the root folders
  * view.
  */
+import { useEffect, useState } from "react";
+import type { SessionStatus } from "~/lib/chat-types";
+import { postSessionStatus } from "~/lib/hooks";
 import type { PushState } from "~/lib/use-push";
+
+/**
+ * The working-on star (docs/session-status.md): toggles the
+ * session's `active` status. Optimistic — the loader re-stamps
+ * on navigation; a failed POST self-heals on the next snapshot
+ * poll. On an archived session the dim star acts as "make
+ * active" (a deliberate dig-out un-archives).
+ */
+function StatusStar({
+  status,
+  folder,
+  sessionId,
+}: {
+  status: SessionStatus | undefined;
+  folder: string;
+  sessionId: string;
+}) {
+  const [current, setCurrent] = useState<SessionStatus | undefined>(status);
+  useEffect(() => setCurrent(status), [status]);
+  const active = current === "active";
+  const toggle = () => {
+    const next = active ? "none" : "active";
+    setCurrent(next === "none" ? undefined : next);
+    postSessionStatus(folder, sessionId, next);
+  };
+  return (
+    <>
+      {current === "archived" && (
+        <span
+          title="Archived — hidden from lists; the star re-activates it"
+          className="shrink-0 select-none rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-500"
+        >
+          archived
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={toggle}
+        aria-pressed={active}
+        aria-label={active ? "Remove from Working on" : "Add to Working on"}
+        title={active ? "Remove from Working on" : "Add to Working on"}
+        className={
+          "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded active:bg-neutral-900 " +
+          (active ? "text-amber-300" : "text-neutral-600")
+        }
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill={active ? "currentColor" : "none"}
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        </svg>
+      </button>
+    </>
+  );
+}
 
 export function Header({
   label,
   busy,
   home,
+  menuOpen,
   onMenu,
   voice,
+  star,
   push,
 }: {
   label: string;
@@ -25,11 +93,20 @@ export function Header({
  * Pass it on every non-root view — in the standalone PWA
  * there is no URL bar or back button to get home with. */
   home?: boolean;
+  /** True while the menu panel is open — the menu button turns
+   * into a ✕ and closes it (same button, two states). */
+  menuOpen?: boolean;
   onMenu: () => void;
   /** When present (chat view), renders the voice-mode toggle. */
   voice?: {
     active: boolean;
     onToggle: () => void;
+  };
+  /** When present (chat view), renders the working-on star. */
+  star?: {
+    status: SessionStatus | undefined;
+    folder: string;
+    sessionId: string;
   };
   /** When present, renders the Web Push bell toggle. Push is
  * app-level (not per-session), so callers pass it on every view. */
@@ -80,6 +157,13 @@ export function Header({
           </span>
         )}
       </div>
+      {star && (
+        <StatusStar
+          status={star.status}
+          folder={star.folder}
+          sessionId={star.sessionId}
+        />
+      )}
       {voice && (
         <button
           type="button"
@@ -176,23 +260,42 @@ export function Header({
       <button
         type="button"
         onClick={onMenu}
+        aria-expanded={menuOpen}
+        aria-label={menuOpen ? "Close menu" : "Menu"}
         className="-mr-1 inline-flex h-9 w-9 items-center justify-center rounded text-neutral-500 active:bg-neutral-900"
-        aria-label="Menu"
       >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <line x1="3" y1="6" x2="21" y2="6" />
-          <line x1="3" y1="12" x2="21" y2="12" />
-          <line x1="3" y1="18" x2="21" y2="18" />
-        </svg>
+        {menuOpen ? (
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="5" y1="5" x2="19" y2="19" />
+            <line x1="19" y1="5" x2="5" y2="19" />
+          </svg>
+        ) : (
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        )}
       </button>
     </header>
   );

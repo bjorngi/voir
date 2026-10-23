@@ -14,6 +14,9 @@ export default [
   route("api/tts", "routes/api.tts.tsx"),
   route("api/folder-diff", "routes/api.folder-diff.tsx"),
   route("api/folders", "routes/api.folders.tsx"),
+  // Voir-local session status overlay (docs/session-status.md):
+  // the "Working on" snapshot (GET) and status transitions (POST).
+  route("api/session-status", "routes/api.session-status.tsx"),
   route("api/timeline-restore", "routes/api.timeline-restore.tsx"),
   route("api/timeline-diff", "routes/api.timeline-diff.tsx"),
   route("api/commit", "routes/api.commit.tsx"),

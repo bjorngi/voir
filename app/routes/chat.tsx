@@ -3,7 +3,9 @@ import type { Route } from "./+types/chat";
 import {
   sessionManager,
   folderSummary,
+  activeSnapshot,
 } from "~/lib/sessions.server";
+import { sessionStatusStore } from "~/lib/session-status.server";
 import { diffFiles, diffSummary, type DiffResult } from "~/lib/diff.server";
 import { listFiles } from "~/lib/files.server";
 import { list as listTimeline } from "~/lib/timeline.server";
@@ -89,11 +91,18 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   }
   const grouped = Array.from(byPath.values());
 
+  // The "Working on" seed for the root view (docs/
+  // session-status.md). The client poll takes over after the
+  // first paint; the snapshot itself resolves from the stubs
+  // the listSessions pass above just hydrated.
+  const active = await activeSnapshot();
+
   if (p.k === "folders") {
     return {
       k: "folders" as const,
       tree: grouped.map((folder) => ({ folder, sessions: folder.sessions })),
       folders: grouped,
+      active,
     };
   }
 
@@ -106,6 +115,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       k: "folders" as const,
       tree: grouped.map((f) => ({ folder: f, sessions: f.sessions })),
       folders: grouped,
+      active,
     };
   }
 
@@ -164,6 +174,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       busy: session.busy,
       messages: session.messages,
       queueDepth: session.queueDepth ?? 0,
+      // Voir-local overlay label for the header star
+      // (docs/session-status.md).
+      status: sessionStatusStore.getStatus(p.folder, session.id),
     },
     // "Attach to chat" hand-off from the Files tab: a relpath the
     // Composer seeds as an @-mention on mount, then strips from

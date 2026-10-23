@@ -4,7 +4,10 @@ import {
   type SessionUpdate,
 } from "./acp-client.server";
 import { capture as captureTimeline } from "./timeline.server";
+import { sessionStatusStore } from "./session-status.server";
 import type {
+  ActivityRow,
+  ActivityState,
   AvailableModel,
   AvailableMode,
   ChatMessage,
@@ -383,6 +386,11 @@ class SessionManager {
     };
     state.sessions.set(res.sessionId, session);
     state.activeSessionId = res.sessionId;
+    // Every new chat is something you're working on
+    // (docs/session-status.md): the shortlist maintains
+    // itself. This also covers machine-seeded inbox
+    // conversations (api.inbox creates then prompts).
+    sessionStatusStore.setStatus(state.path, res.sessionId, "active");
     return session;
   }
 
@@ -406,6 +414,9 @@ class SessionManager {
     // snapshot the fully-replayed transcript.
     session.messages = [];
     session.replaying = true;
+    // The stub (if any) is about to be replaced by the replayed
+    // transcript — from here on voir makes live claims again.
+    session.stub = false;
     const replayDone = new Promise<void>((resolve) => {
       session.replayDoneResolver = resolve;
     });
@@ -456,6 +467,9 @@ class SessionManager {
       busy: false,
     };
     session.messages = [];
+    // Mirror loadSession's stub handling: the session becomes
+    // voir-authoritative from here (see loadSession).
+    session.stub = false;
     state.sessions.set(sessionId, session);
     state.activeSessionId = sessionId;
     return session;
@@ -481,12 +495,19 @@ class SessionManager {
       );
     }
     const merged = new Map<string, SessionState>();
+    // Ids the agents' fresh lists know (post-cwd-filter), for
+    // pruning the status store — the one removal the store
+    // trusts (docs/session-status.md: never on DELETE).
+    const known = new Set<string>();
+    let answered = 0;
     for (const state of agents) {
       const client = this.requireClient(state);
       const list = await client.listSessions(state.path);
+      answered++;
       for (const entry of list) {
         if (!entry.sessionId) continue;
         if (entry.cwd && entry.cwd !== state.path) continue;
+        known.add(entry.sessionId);
         const existing = state.sessions.get(entry.sessionId);
         if (!existing) {
           state.sessions.set(entry.sessionId, {
@@ -495,12 +516,27 @@ class SessionManager {
             createdAt: Date.parse(entry.updatedAt ?? "") || Date.now(),
             messages: [],
             busy: false,
+            // A stub: known only from the agent's session/list
+            // (title, updatedAt). activityOf makes no live
+            // claim for stubs until a load clears the flag.
+            stub: true,
           });
         }
       }
       for (const session of state.sessions.values()) {
         merged.set(session.id, session);
       }
+    }
+    // Prune the status store only against a complete picture:
+    // every agent under the path answered the list call (an
+    // unnamed call iterates exactly agentsUnder(folder), so
+    // the equality check also rejects a named call on a
+    // multi-agent path, where `known` would be partial).
+    if (
+      answered === agents.length &&
+      agents.length === this.agentsUnder(folder).length
+    ) {
+      sessionStatusStore.prune(folder, known);
     }
     return Array.from(merged.values()).sort(
       (a, b) => b.createdAt - a.createdAt,
@@ -509,6 +545,23 @@ class SessionManager {
 
   getSession(folder: string, sessionId: string): SessionState | undefined {
     return this.sessionAgent(folder, sessionId)?.sessions.get(sessionId);
+  }
+
+  /**
+   * Resolve a (path, sessionId) pair to its agent and session
+   * in memory — no agent round-trip, no loading. The status
+   * snapshot and API use this: store entries that can't be
+   * resolved here are skipped (nothing honest to say about a
+   * session voir doesn't hold), and POST /api/session-status
+   * 404s on them.
+   */
+  lookupSession(
+    folder: string,
+    sessionId: string,
+  ): { state: FolderState; session: SessionState } | undefined {
+    const state = this.sessionAgent(folder, sessionId);
+    const session = state?.sessions.get(sessionId);
+    return state && session ? { state, session } : undefined;
   }
 
   subscribe(sessionId: string, listener: SessionListener) {
@@ -540,6 +593,11 @@ class SessionManager {
     const state = this.sessionAgent(folder, sessionId);
     const session = state?.sessions.get(sessionId);
     if (!state || !session) throw new Error("Unknown folder/session");
+
+    // Prompting is working on it (docs/session-status.md): the
+    // shortlist maintains itself. Prompting an archived session
+    // is a deliberate dig-out — this re-activates it.
+    sessionStatusStore.setStatus(state.path, session.id, "active");
 
     // For the visible user message in the transcript, collapse the
     // content blocks into a single string. resource_links show up as
@@ -1371,6 +1429,16 @@ export interface SessionState {
    * UI shows a "Queued (n)" badge in the composer.
    */
   queueDepth?: number;
+  /**
+   * True while this session is a stub hydrated from the
+   * agent's `session/list` (title + updatedAt only, never
+   * loaded). `activityOf` reports `idle` for stubs — voir
+   * makes no live claim about them. Cleared by loadSession
+   * and resumeSession (which reuse the stub object); never
+   * set by createSession — a created session is genuinely
+   * empty, not unknown (docs/session-status.md).
+   */
+  stub?: boolean;
 }
 
 export interface FolderState {
@@ -1501,7 +1569,12 @@ export function folderSummary(state: FolderState): FolderSummary {
     lastSeenAt: state.lastSeenAt,
     sessions: Array.from(state.sessions.values())
       .sort((a, b) => b.createdAt - a.createdAt)
-      .map(sessionSummary),
+      .map((s) => ({
+        ...sessionSummary(s),
+        // The status overlay: voir-local, never agent truth.
+        // `undefined` (the pile) drops out of JSON payloads.
+        status: sessionStatusStore.getStatus(state.path, s.id),
+      })),
   };
 }
 
@@ -1512,4 +1585,129 @@ export function sessionSummary(s: SessionState): SessionSummary {
     createdAt: s.createdAt,
     messageCount: s.messages.length,
   };
+}
+
+// -----------------------------------------------------------------------
+// Live state ("where is the ball") — docs/session-status.md
+// -----------------------------------------------------------------------
+
+/** Sort order for the snapshot: liveness first, recency within. */
+const ACTIVITY_ORDER: Record<ActivityState, number> = {
+  working: 0,
+  waiting: 1,
+  fresh: 2,
+  idle: 3,
+  offline: 4,
+};
+
+/**
+ * Derive a session's live state from voir's in-memory truth.
+ * Pure (plain objects in, state out), unit-tested in
+ * test/session-status.test.ts. Priority order:
+ *
+ *   offline  the agent leg is degraded — busy isn't trustworthy
+ *            on a dead leg, so this overrides everything
+ *   idle     a stub: voir knows only agent truth, makes no live
+ *            claim (queue depth unknown → 0)
+ *   working  busy — a turn is in flight
+ *   waiting  held, has messages — turn done, ball with you
+ *   fresh    held, no messages — created, never prompted
+ *
+ * `lastActivityAt` is the `at` of the last message (streaming
+ * chunks bump it, so working rows stay fresh), else
+ * `createdAt` — which for stubs is the agent-side updatedAt.
+ */
+export function activityOf(
+  state: FolderState,
+  session: SessionState,
+): { state: ActivityState; queued: number; lastActivityAt: number } {
+  const lastActivityAt =
+    session.messages.length > 0
+      ? session.messages[session.messages.length - 1].at
+      : session.createdAt;
+  if (state.status === "degraded") {
+    return { state: "offline", queued: session.queueDepth ?? 0, lastActivityAt };
+  }
+  if (session.stub) {
+    return { state: "idle", queued: 0, lastActivityAt };
+  }
+  if (session.busy) {
+    return { state: "working", queued: session.queueDepth ?? 0, lastActivityAt };
+  }
+  return {
+    state: session.messages.length > 0 ? "waiting" : "fresh",
+    queued: session.queueDepth ?? 0,
+    lastActivityAt,
+  };
+}
+
+/** Best-effort hydration bound: a store entry can outlive
+ *  voir's memory (restart) or be created by another actor
+ *  (the inbox seeds a conversation while a dashboard is
+ *  open). listSessions is an agent round-trip, so attempts
+ *  are bounded per folder. */
+const HYDRATE_BACKOFF_MS = 15_000;
+const hydrateAttempts = new Map<string, number>();
+
+function activityRowOf(state: FolderState, session: SessionState): ActivityRow {
+  const a = activityOf(state, session);
+  return {
+    folder: state.path,
+    agentName: state.agentName,
+    sessionId: session.id,
+    title: session.title,
+    state: a.state,
+    queued: a.queued,
+    lastActivityAt: a.lastActivityAt,
+  };
+}
+
+function activitySort(a: ActivityRow, b: ActivityRow): number {
+  const byState = ACTIVITY_ORDER[a.state] - ACTIVITY_ORDER[b.state];
+  if (byState !== 0) return byState;
+  return b.lastActivityAt - a.lastActivityAt;
+}
+
+/**
+ * The "Working on" snapshot: every active store entry that
+ * resolves to a held session, with its derived live state —
+ * GET /api/session-status and the root loader's seed both
+ * serve this. Entries that can't be resolved in memory are
+ * first given a bounded hydration chance (listSessions stubs
+ * them); whatever still doesn't resolve (folder unregistered,
+ * agent degraded, session gone) is skipped — there is nothing
+ * honest to say about it, and the store keeps the entry until
+ * pruned by a later successful list call.
+ */
+export async function activeSnapshot(): Promise<ActivityRow[]> {
+  const entries = sessionStatusStore.listActive();
+  const rows: ActivityRow[] = [];
+  const resolved = new Set<string>();
+  const unresolvedFolders = new Set<string>();
+  for (const e of entries) {
+    const found = sessionManager.lookupSession(e.folder, e.sessionId);
+    if (found) {
+      resolved.add(`${e.folder}\u0000${e.sessionId}`);
+      rows.push(activityRowOf(found.state, found.session));
+    } else {
+      unresolvedFolders.add(e.folder);
+    }
+  }
+  const now = Date.now();
+  for (const folder of unresolvedFolders) {
+    if (now - (hydrateAttempts.get(folder) ?? 0) < HYDRATE_BACKOFF_MS) continue;
+    hydrateAttempts.set(folder, now);
+    try {
+      await sessionManager.listSessions(folder);
+    } catch {
+      // Unregistered or degraded: rows stay skipped this pass.
+    }
+  }
+  for (const e of entries) {
+    if (resolved.has(`${e.folder}\u0000${e.sessionId}`)) continue;
+    const found = sessionManager.lookupSession(e.folder, e.sessionId);
+    if (found) rows.push(activityRowOf(found.state, found.session));
+  }
+  rows.sort(activitySort);
+  return rows;
 }

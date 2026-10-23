@@ -1,4 +1,85 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import type { ActivityRow, SessionStatus } from "~/lib/chat-types";
+
+/**
+ * POST a status transition to /api/session-status. Fire-and-
+ * forget: callers update optimistically and the snapshot poll
+ * confirms within its interval. Not a hook — it lives here
+ * because this is the client-side utilities module.
+ */
+export function postSessionStatus(
+  folder: string,
+  sessionId: string,
+  status: SessionStatus | "none",
+): void {
+  void fetch("/api/session-status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ folder, sessionId, status }),
+  }).catch(() => {
+    // The next poll re-syncs; a failed toggle self-heals.
+  });
+}
+
+const SESSION_STATUS_POLL_MS = 2000;
+
+/**
+ * The "Working on" rows, polled live (docs/session-status.md).
+ *
+ * Fetches GET /api/session-status every 2s while the document
+ * is visible — the snapshot is a few hundred bytes and the
+ * interesting transitions (working → waiting) are minutes
+ * apart, so a poll beats a global SSE channel (which would need
+ * a new server-side broadcast surface for ~0s freshness nobody
+ * needs). Seeded from the root loader so the first paint is
+ * server-rendered; the seed re-applies on navigation.
+ *
+ * `unstar` removes a row optimistically and POSTs "none" —
+ * the one manual cleanup act of the curate-in model.
+ */
+export function useSessionStatus(seed?: ActivityRow[]) {
+  const [rows, setRows] = useState<ActivityRow[]>(seed ?? []);
+  const visible = usePageVisible();
+
+  // Re-seed when the loader hands us fresh data (navigation).
+  useEffect(() => {
+    if (seed) setRows(seed);
+  }, [seed]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/session-status");
+        if (!res.ok) return;
+        const data = (await res.json()) as { sessions?: ActivityRow[] };
+        if (!cancelled && Array.isArray(data.sessions)) {
+          setRows(data.sessions);
+        }
+      } catch {
+        // Server restart / flaky network: the next tick retries.
+      }
+    };
+    void tick(); // immediate on (re)becoming visible
+    const id = setInterval(tick, SESSION_STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [visible]);
+
+  const unstar = useCallback((row: ActivityRow) => {
+    setRows((rs) =>
+      rs.filter(
+        (r) => !(r.sessionId === row.sessionId && r.folder === row.folder),
+      ),
+    );
+    postSessionStatus(row.folder, row.sessionId, "none");
+  }, []);
+
+  return { rows, unstar };
+}
 
 /**
  * Track whether the page is currently visible. SSE/EventSource gets

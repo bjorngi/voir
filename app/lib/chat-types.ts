@@ -246,11 +246,60 @@ export interface DiffSummary {
   untracked: number;
 }
 
+/**
+ * Voir's own label for a session (docs/session-status.md).
+ * Agent truth (`session/list`) carries nothing of the sort,
+ * so this lives in voir's overlay store
+ * (`session-status.server.ts`) and never travels to the
+ * agent. `undefined` = the pile — the default, never written.
+ * `active` and `archived` are exclusive by construction
+ * (setting either clears the other).
+ */
+export type SessionStatus = "active" | "archived";
+
+/**
+ * Live, derived state of a session — "where is the ball"
+ * (see `activityOf` in sessions.server.ts). Never persisted;
+ * best-effort from SessionManager's in-memory truth:
+ *
+ *   working   a turn is in flight
+ *   waiting   turn done, the agent waits for you
+ *   fresh     created, never prompted
+ *   idle      a stub — voir knows only agent truth (title,
+ *             updatedAt); no live claim is made
+ *   offline   the agent leg is degraded (heartbeat failing)
+ */
+export type ActivityState =
+  | "working"
+  | "waiting"
+  | "fresh"
+  | "idle"
+  | "offline";
+
+/**
+ * One row of the "Working on" snapshot — GET /api/session-status
+ * and the root loader's `active` seed. Sorted by `state`
+ * (working → waiting → fresh → idle → offline), then recency.
+ */
+export interface ActivityRow {
+  folder: string;
+  agentName?: string;
+  sessionId: string;
+  title?: string;
+  state: ActivityState;
+  /** Prompts pi has queued for delivery between turns (>0 only while working). */
+  queued: number;
+  /** `at` of the last message, else the agent-side updatedAt proxy. */
+  lastActivityAt: number;
+}
+
 export interface SessionSummary {
   id: string;
   title?: string;
   createdAt: number;
   messageCount: number;
+  /** Voir's overlay label; `undefined` = the pile. */
+  status?: SessionStatus;
 }
 
 export interface SlashCommand {

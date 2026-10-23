@@ -95,18 +95,29 @@ export function FolderTree({
               </button>
             </form>
           </li>
-          {sessions.map((s) => (
-            <li key={s.id} className="relative">
-              <a
-                href={sessionUrl(folder.path, s.id)}
-                onClick={onPick}
-                className="block px-12 py-2 pr-10 text-sm text-neutral-300 active:bg-neutral-800"
-              >
-                {s.title ?? s.id.slice(0, 8)}
-              </a>
-              <SessionDebugButton session={s} folder={folder} />
-            </li>
-          ))}
+          {sessions
+            // Archived sessions are hidden from every list by
+            // default (docs/session-status.md); the sessions
+            // view's "Show archived" toggle is the only reveal.
+            .filter((s) => s.status !== "archived")
+            .map((s) => (
+              <li key={s.id} className="relative">
+                <a
+                  href={sessionUrl(folder.path, s.id)}
+                  onClick={onPick}
+                  className="block px-12 py-2 pr-10 text-sm text-neutral-300 active:bg-neutral-800"
+                >
+                  {s.status === "active" && (
+                    <span
+                      title="Active — in Working on"
+                      className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-blue-400 align-middle"
+                    />
+                  )}
+                  {s.title ?? s.id.slice(0, 8)}
+                </a>
+                <SessionDebugButton session={s} folder={folder} />
+              </li>
+            ))}
         </ul>
       )}
     </li>

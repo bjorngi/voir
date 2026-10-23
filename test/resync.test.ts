@@ -8,6 +8,11 @@ import { fileURLToPath } from "node:url";
 import { sessionManager } from "../app/lib/sessions.server";
 import type { ChatMessage } from "../app/lib/chat-types";
 
+// The status store persists under VOIR_DATA_DIR (docs/
+// session-status.md): createSession auto-activates, which
+// writes — isolate the tests' writes from the repo's dev-data.
+process.env.VOIR_DATA_DIR = await mkdtemp(join(tmpdir(), "voir-resync-"));
+
 /**
  * End-to-end resync test: a real acp-spawn bridge running the
  * mock agent, with --sse-lifetime forcing the SSE leg to drop

@@ -406,11 +406,10 @@ export function ChatView({
   // instead of waiting for the whole turn. Per-message progress is
   // kept in a ref keyed by message id, so reconnect snapshot
   // replacements and idempotent re-renders don't re-speak content.
-  // The `tts` hook owns the toggle (header) and the utterance
-  // queue; cancelling on user messages keeps turns from stacking
-  // audio on top of each other. Voice conversation mode forces
-  // narration on — a spoken conversation without spoken replies
-  // isn't one.
+  // The `tts` hook owns the utterance queue; cancelling on user
+  // messages keeps turns from stacking audio on top of each
+  // other. Voice conversation mode forces narration on — a spoken
+  // conversation without spoken replies isn't one.
   const spokenChars = useRef(new Map<string, number>());
   const ttsSeeded = useRef(false);
   const prevUserCount = useRef(0);

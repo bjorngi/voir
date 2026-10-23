@@ -32,9 +32,10 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         typeof WebSocket !== "undefined",
     );
   }, []);
-  // Spoken replies: the toggle lives in the header, the speaking
-  // lives in the chat view. One hook instance for both — the
-  // state is per-app, not per-view.
+  // Spoken replies: voice mode narrates via the ChatView — the
+  // engine (one hook instance) lives here, the speaking lives in
+  // the chat view. The header shows no toggle; narration is a
+  // voice-mode concern.
   const tts = useSpeechSynthesis();
   // Push notifications: app-level like tts. The bell shows on every
   // view once the probe settles (capable + VAPID configured).
@@ -76,26 +77,13 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
       <Header
         label={label}
         busy={busy}
+        home={data.k !== "folders"}
         onMenu={() => setPickerOpen(true)}
         voice={
           data.k === "chat" && voiceSupported
             ? {
                 active: voiceActive,
                 onToggle: () => setVoiceActive((v) => !v),
-              }
-            : undefined
-        }
-        tts={
-          data.k === "chat" && tts.supported
-            ? {
-                enabled: tts.enabled,
-                onToggle: () => {
-                  // A gesture: also unlock audio playback for the
-                  // neural engine (AudioContexts start suspended
-                  // on mobile).
-                  tts.preparePlayback();
-                  tts.setEnabled(!tts.enabled);
-                },
               }
             : undefined
         }

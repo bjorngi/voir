@@ -1,27 +1,31 @@
 /**
- * The page header: a status dot + label, a text-to-speech toggle
- * (chat view only), and a menu button on the right that opens the
- * picker. The dot pulses amber while a turn is in flight;
- * otherwise it sits dim.
+ * The page header: a status dot + label, and the view toggles
+ * on the right (voice-mode mic, push bell) that end in the
+ * reload and menu buttons. The dot pulses amber while a turn
+ * is in flight; otherwise it sits dim.
+ *
+ * Installed-PWA affordances (there is no browser chrome to lean
+ * on in standalone): a reload button, and — when `home` is set —
+ * the label itself becomes a link back to the root folders
+ * view.
  */
 import type { PushState } from "~/lib/use-push";
 
 export function Header({
   label,
   busy,
+  home,
   onMenu,
-  tts,
   voice,
   push,
 }: {
   label: string;
   busy?: boolean;
+  /** When true, the label is rendered as a link back to "/".
+ * Pass it on every non-root view — in the standalone PWA
+ * there is no URL bar or back button to get home with. */
+  home?: boolean;
   onMenu: () => void;
-  /** When present (chat view), renders the spoken-replies toggle. */
-  tts?: {
-    enabled: boolean;
-    onToggle: () => void;
-  };
   /** When present (chat view), renders the voice-mode toggle. */
   voice?: {
     active: boolean;
@@ -43,9 +47,38 @@ export function Header({
             (busy ? "bg-amber-400 animate-pulse" : "bg-neutral-700")
           }
         />
-        <span className="min-w-0 flex-1 truncate text-sm text-neutral-200">
-          {label}
-        </span>
+        {home ? (
+          // The home affordance: a small house icon marks the
+          // label as a link; the text stays what it was (the
+          // folder path) so the header reads identically.
+          <a
+            href="/"
+            aria-label="Back to folders"
+            title="Back to folders"
+            className="-ml-1 flex min-w-0 flex-1 items-center gap-1.5 rounded py-2 pl-1 pr-2 text-sm text-neutral-200 active:bg-neutral-900"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className="shrink-0 text-neutral-600"
+            >
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
+            </svg>
+            <span className="min-w-0 truncate">{label}</span>
+          </a>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-sm text-neutral-200">
+            {label}
+          </span>
+        )}
       </div>
       {voice && (
         <button
@@ -55,7 +88,7 @@ export function Header({
           aria-label="Toggle voice conversation mode"
           title="Talk instead of typing — hands-free conversation"
           className={
-            "inline-flex h-9 shrink-0 items-center gap-1.5 rounded px-2 active:bg-neutral-900 " +
+            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded active:bg-neutral-900 " +
             (voice.active ? "text-amber-300" : "text-neutral-600")
           }
         >
@@ -74,9 +107,6 @@ export function Header({
             <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
             <line x1="12" y1="18" x2="12" y2="22" />
           </svg>
-          <span className="text-[11px] font-mono uppercase tracking-wider">
-            Voice
-          </span>
         </button>
       )}
       {push && (
@@ -118,40 +148,31 @@ export function Header({
           </svg>
         </button>
       )}
-      {tts && (
-        <button
-          type="button"
-          onClick={tts.onToggle}
-          aria-pressed={tts.enabled}
-          aria-label="Toggle spoken replies (text to speech)"
-          title="Narrate agent replies out loud"
-          className={
-            "inline-flex h-9 shrink-0 items-center gap-1.5 rounded px-2 active:bg-neutral-900 " +
-            (tts.enabled
-              ? "text-amber-300"
-              : "text-neutral-600")
-          }
+      {/* Reload: the standalone PWA has no browser reload
+          button, so this is the recovery path — re-fetches the
+          document (and thus the loader data) from scratch. */}
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        aria-label="Reload"
+        title="Reload"
+        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded text-neutral-500 active:bg-neutral-900"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-          </svg>
-          <span className="text-[11px] font-mono uppercase tracking-wider">
-            Read aloud
-          </span>
-        </button>
-      )}
+          <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+          <path d="M21 3v5h-5" />
+        </svg>
+      </button>
       <button
         type="button"
         onClick={onMenu}

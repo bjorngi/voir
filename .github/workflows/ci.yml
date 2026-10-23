@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch: {}  # manual re-verify of main (token-made merge commits don't re-trigger CI)
 
 permissions:
   contents: read

@@ -15,6 +15,14 @@ updates:
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
+    # The React Router packages are peer-locked: bumping one alone makes
+    # `npm ci` fail with ERESOLVE. This family upgrades together in one
+    # PR; everything else stays one PR per update.
+    groups:
+      react-router:
+        patterns:
+          - "react-router"
+          - "@react-router/*"
 
   # Node base image in the multi-stage Dockerfile (ARG NODE_VERSION=22)
   - package-ecosystem: "docker"

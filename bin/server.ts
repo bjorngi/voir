@@ -70,6 +70,16 @@ const log = (msg: string) =>
   console.log(new Date().toISOString().slice(11, 19), msg);
 
 const app = express();
+// Behind the reverse proxy (Caddy, tailscale serve), the proxy
+// leg is plain HTTP and sets X-Forwarded-Proto/-Host. Without
+// this, express reconstructs request URLs as http://<host>, and
+// React Router's action CSRF check ("Origin must match the
+// request URL origin", added in react-router 8.5) rejects every
+// form/fetch action POST with 400. With it, express honors
+// X-Forwarded-Proto/-Host and the URL matches the browser's
+// Origin. Unproxied access (localhost:9000) is unaffected:
+// no X-Forwarded-* headers, express falls back to the socket.
+app.set("trust proxy", true);
 // Static assets from the client build (JS/CSS chunks, the PWA
 // manifest, service worker, icons, the pcm worklet). Falls
 // through to the React Router handler for anything else.

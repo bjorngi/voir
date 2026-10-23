@@ -14,7 +14,7 @@
     "typecheck": "react-router typegen && tsc"
   },
   "dependencies": {
-    "@react-router/express": "^7.6.0",
+    "@react-router/express": "^8.5.0",
     "@react-router/node": "^7.6.0",
     "@react-router/serve": "^7.6.0",
     "express": "^5.1.0",

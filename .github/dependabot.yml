@@ -15,14 +15,17 @@ updates:
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
-    # The React Router packages are peer-locked: bumping one alone makes
-    # `npm ci` fail with ERESOLVE. This family upgrades together in one
-    # PR; everything else stays one PR per update.
+    # The React Router + Vite stack is peer-locked: bumping one piece alone
+    # makes `npm ci` fail with ERESOLVE (@react-router/dev@8 needs vite ^7||^8,
+    # vite-tsconfig-paths pins its own vite range). These upgrade together in
+    # one PR; everything else stays one PR per update.
     groups:
-      react-router:
+      react-router-vite:
         patterns:
           - "react-router"
           - "@react-router/*"
+          - "vite"
+          - "vite-tsconfig-paths"
 
   # Node base image in the multi-stage Dockerfile (ARG NODE_VERSION=22)
   - package-ecosystem: "docker"

@@ -31,7 +31,12 @@ export function FolderTree({
   sessions: SessionSummary[];
   onPick?: () => void;
 }) {
-  const [open, setOpen] = useState(true);
+  // Collapsed by default: the homescreen is a fleet overview —
+  // the folder row (name, agent badge, ±diff pill) is the
+  // summary, and the "Working on" shortlist above already
+  // surfaces whatever a session is doing. Expand with the
+  // chevron when you want the folder's chats.
+  const [open, setOpen] = useState(false);
   const href = folderUrl(folder.path);
   const diffHref = `${href}?view=diff`;
   return (

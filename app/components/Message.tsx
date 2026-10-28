@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { memo, useState, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -16,8 +16,15 @@ import { useDebugPopoverDismiss } from "./DebugPopover";
  * Each message has a small "···" button in its top-right corner that
  * opens a debug panel with the raw JSON — useful for inspecting
  * tool-call content, message ids, etc.
+ *
+ * Memoized: a streamed chunk only changes the streaming
+ * message's object identity (the server sends fresh objects on
+ * the wire), so the rest of a long transcript — every markdown
+ * message included — skips re-rendering per chunk. Without
+ * this, streaming into a long session re-parsed the whole
+ * transcript's markdown on every chunk.
  */
-export function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   msg,
   answered = false,
   onSendAnswer,
@@ -55,7 +62,7 @@ export function MessageBubble({
   }
   if (msg.kind === "plan") return <Plan m={msg} />;
   return null;
-}
+});
 
 // -----------------------------------------------------------------------
 // Debug panel — top-right "···" button, opens raw JSON

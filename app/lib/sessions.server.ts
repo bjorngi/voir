@@ -1,6 +1,7 @@
 import {
   AcpClient,
   HttpJsonRpcTransport,
+  type SessionListEntry,
   type SessionUpdate,
 } from "./acp-client.server";
 import { capture as captureTimeline } from "./timeline.server";
@@ -47,6 +48,32 @@ import type {
 const HEARTBEAT_TIMEOUT_MS = 60_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
+/** How long a `session/list` response stays fresh (per agent).
+ *
+ * The agent-side list is a scan of its whole session store —
+ * every session file, head + tail, JSON-parsed (measured:
+ * seconds once the store grows to hundreds of sessions). Voir
+ * asks every registered agent for its list on every
+ * navigation, so the scan must not sit in that path: results
+ * are cached per agent and served stale-while-revalidate (see
+ * cachedList). The TTL is the background refresh cadence —
+ * a terminal-created session appears within one window.
+ * Sessions voir itself creates are visible immediately via
+ * the in-memory merge (listSessions), never hidden by a
+ * cached list. Folder register/unregister drops the entry.
+ *
+ * Overridable (VOIR_LIST_CACHE_TTL_MS) for tests — the
+ * default is far too long to wait out in a test. Underscores
+ * are accepted for readability, e.g. "10_000". Read lazily
+ * (like VOIR_DATA_DIR in session-status.server.ts) so a test
+ * file can set it after the static import.
+ */
+function listCacheTtlMs(): number {
+  return Number(
+    (process.env.VOIR_LIST_CACHE_TTL_MS ?? "10_000").replace(/_/g, ""),
+  );
+}
+
 class SessionManager {
   /** Keyed by agentKey(path, name) — one entry per agent. */
   private folders = new Map<string, FolderState>();
@@ -56,6 +83,12 @@ class SessionManager {
   private heartbeats = new Map<string, NodeJS.Timeout>();
   /** Folders with a resync currently in flight (guards overlap). */
   private resyncInFlight = new Set<string>();
+  /** Cached session/list results, keyed by agentKey (see
+   * cachedList / listCacheTtlMs). */
+  private listCache = new Map<string, { at: number; list: SessionListEntry[] }>();
+  /** In-flight session/list RPCs, keyed by agentKey: concurrent
+   * callers (parallel navigations) share one round-trip. */
+  private listInFlight = new Map<string, Promise<SessionListEntry[]>>();
 
   // -----------------------------------------------------------------------
   // Folder lifecycle
@@ -93,6 +126,7 @@ class SessionManager {
     });
     this.attachClientNotifications(key, client);
     await client.start();
+    this.invalidateListCache(key);
 
     if (existing) {
       const old = this.clients.get(key);
@@ -221,6 +255,7 @@ class SessionManager {
       this.clients.delete(key);
     }
     this.stopHeartbeat(key);
+    this.invalidateListCache(key);
 
     const state = this.folders.get(key);
     if (state) {
@@ -495,14 +530,18 @@ class SessionManager {
       );
     }
     const merged = new Map<string, SessionState>();
-    // Ids the agents' fresh lists know (post-cwd-filter), for
-    // pruning the status store — the one removal the store
-    // trusts (docs/session-status.md: never on DELETE).
+    // Ids known to exist agent-side, for pruning the status
+    // store — the one removal the store trusts (docs/
+    // session-status.md: never on DELETE). Sources: the (possibly
+    // cached) list, plus every non-stub in-memory session —
+    // those are agent truth by construction (created or loaded
+    // through this agent), and a cached list can lag a fresh
+    // createSession by one background refresh. Stubs never
+    // join: a stub is only ever a list observation.
     const known = new Set<string>();
     let answered = 0;
     for (const state of agents) {
-      const client = this.requireClient(state);
-      const list = await client.listSessions(state.path);
+      const list = await this.cachedList(state);
       answered++;
       for (const entry of list) {
         if (!entry.sessionId) continue;
@@ -524,6 +563,7 @@ class SessionManager {
         }
       }
       for (const session of state.sessions.values()) {
+        if (!session.stub) known.add(session.id);
         merged.set(session.id, session);
       }
     }
@@ -545,6 +585,68 @@ class SessionManager {
 
   getSession(folder: string, sessionId: string): SessionState | undefined {
     return this.sessionAgent(folder, sessionId)?.sessions.get(sessionId);
+  }
+
+  /**
+   * `session/list` through the TTL cache (see listCacheTtlMs),
+   * stale-while-revalidate:
+   *
+   *   - cold (no entry)      → await the RPC and cache it
+   *   - fresh (inside TTL)   → return the cached entry
+   *   - stale (past TTL)     → return the cached entry *and*
+   *                            kick a background refresh
+   *
+   * Callers therefore block only on the very first list after
+   * a Voir restart — the agent-side scan (hundreds of ms to
+   * seconds, growing with the session store) never sits in a
+   * navigation path again. Concurrent callers share one
+   * in-flight RPC; failures are never cached (the next caller
+   * retries).
+   */
+  private cachedList(state: FolderState): Promise<SessionListEntry[]> {
+    const key = agentKey(state.path, state.agentName);
+    const hit = this.listCache.get(key);
+    if (hit) {
+      if (Date.now() - hit.at < listCacheTtlMs()) {
+        return Promise.resolve(hit.list);
+      }
+      this.refreshList(state, key).catch(() => {});
+      return Promise.resolve(hit.list);
+    }
+    return this.refreshList(state, key);
+  }
+
+  /** Issue (or join) the in-flight session/list RPC for `key`,
+   * caching the result on success. */
+  private refreshList(
+    state: FolderState,
+    key: string,
+  ): Promise<SessionListEntry[]> {
+    const inflight = this.listInFlight.get(key);
+    if (inflight) return inflight;
+    const p = this.requireClient(state)
+      .listSessions(state.path)
+      .then((list) => {
+        this.listInFlight.delete(key);
+        this.listCache.set(key, { at: Date.now(), list });
+        return list;
+      })
+      .catch((err: unknown) => {
+        this.listInFlight.delete(key);
+        throw err;
+      });
+    this.listInFlight.set(key, p);
+    return p;
+  }
+
+  /** Drop the cached session list for an agent. Called when the
+   * agent's registration changes (new client, unregister) — the
+   * next listSessions refills it with a fresh RPC. Not called
+   * for createSession: the new session joins the in-memory
+   * merge immediately and the status-store prune treats
+   * non-stub in-memory sessions as known (see listSessions). */
+  private invalidateListCache(key: string) {
+    this.listCache.delete(key);
   }
 
   /**

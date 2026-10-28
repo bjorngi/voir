@@ -85,6 +85,10 @@ export interface SessionListEntry {
 
 export interface SessionListResult {
   sessions: SessionListEntry[];
+  /** Opaque page cursor from agents that paginate the list
+   * (pi-acp: 50 entries per page). Absent when the list is
+   * complete — see AcpClient.listSessions. */
+  nextCursor?: string | null;
 }
 
 /**
@@ -488,10 +492,26 @@ export class AcpClient {
   }
 
   async listSessions(cwd: string): Promise<SessionListEntry[]> {
-    const res = await this.request<SessionListResult | null>("session/list", {
-      cwd,
-    });
-    return res?.sessions ?? [];
+    // Agents may paginate (pi-acp serves 50 entries per page
+    // and reports `nextCursor` for more). Follow the cursor to
+    // exhaustion so callers always see the complete list —
+    // ignoring it silently truncates folders with >50 sessions.
+    // `cursor` is only sent once the agent advertised it, so
+    // non-paginating agents never see an unknown param. The
+    // page cap is a runaway guard, not a limit.
+    const PAGE_LIMIT = 20;
+    const out: SessionListEntry[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < PAGE_LIMIT; page++) {
+      const res: SessionListResult | null = await this.request<
+        SessionListResult | null
+      >("session/list", cursor ? { cwd, cursor } : { cwd });
+      if (!res) break;
+      if (Array.isArray(res.sessions)) out.push(...res.sessions);
+      if (!res.nextCursor) break;
+      cursor = res.nextCursor;
+    }
+    return out;
   }
 
   cancel(sessionId: string) {

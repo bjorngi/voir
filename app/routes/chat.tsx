@@ -49,17 +49,35 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   // view and the folder-scoping check below both see up-to-
   // date sessions. Paths can host several agents (same
   // worktree, different engines); listSessions merges their
-  // session lists per path, so dedupe first.
+  // session lists per path, so dedupe first. The per-agent
+  // RPC result is TTL-cached in the session manager (see
+  // sessions.server.ts), so repeated navigations don't
+  // re-trigger the agent-side full-store scan.
   const paths = [...new Set(states.map((s) => s.path))];
   await Promise.all(paths.map((p) => sessionManager.listSessions(p)));
   // Cheap per-folder diff summaries for the root view's
   // `+N -M` tag. The git invocations don't depend on each
-  // other and they're all <100ms for typical worktrees.
+  // other and they're all <100ms for typical worktrees — but
+  // only the folder tree (root view) and the chat tab badge
+  // (active folder) ever render them, so scope the spawns:
+  // all folders on the root view, the one folder on chat/files
+  // tabs, none on the sessions/changes views. A chat URL for
+  // an unknown folder falls through to the root view below,
+  // which renders every tag — cover that by testing the path
+  // set, not the parsed route.
+  const needAllSummaries =
+    p.k === "folders" || !paths.includes(p.folder);
+  const needOwnSummary = p.k === "chat" || p.k === "files";
   const summaries = await Promise.all(
-    states.map(async (s) => ({
-      path: s.path,
-      summary: await diffSummary(s.path),
-    })),
+    states
+      .filter(
+        (s) =>
+          needAllSummaries || (needOwnSummary && s.path === p.folder),
+      )
+      .map(async (s) => ({
+        path: s.path,
+        summary: await diffSummary(s.path),
+      })),
   );
   const summaryByPath = new Map(
     summaries.map((r) => [r.path, r.summary ?? undefined]),

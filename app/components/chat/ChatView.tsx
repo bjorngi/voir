@@ -4,7 +4,7 @@
  * updates from the agent and to dispatch user actions
  * (send / cancel / set_model / set_mode).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatLoaderData } from "~/routes/chat";
 import type {
   AvailableModel,
@@ -88,6 +88,23 @@ export function ChatView({
   const [connReason, setConnReason] = useState<string | null>(null);
   const visible = usePageVisible();
   const scrollRef = useAutoScroll<HTMLDivElement>([messages, visible]);
+
+  // Which ask_user tool calls have been answered: any user
+  // message later in the transcript answers the card (see the
+  // answered prop in MessageBubble). One backward pass — the
+  // forward version did slice+some per message, which is
+  // O(n²) on every render of a long transcript.
+  const answeredIds = useMemo(() => {
+    const ids = new Set<string>();
+    let seenUser = false;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === "user") seenUser = true;
+      else if (m.role === "agent" && m.kind === "tool" && seenUser)
+        ids.add(m.id);
+    }
+    return ids;
+  }, [messages]);
 
   // Live-update stream. The server replays the current transcript
   // as `snapshot` events, then `ready`, then live `message` events —
@@ -504,7 +521,7 @@ export function ChatView({
           className="absolute inset-0 overflow-y-auto px-3 py-3 sm:px-4"
         >
           <div className="mx-auto flex max-w-3xl flex-col gap-3">
-            {messages.map((m, i) => (
+            {messages.map((m) => (
               <MessageBubble
                 key={m.id}
                 msg={m}
@@ -512,12 +529,10 @@ export function ChatView({
                 // follows it in the transcript — the answer is a normal
                 // message, so that's exactly the signal. Collapses the
                 // card (live and on replay) so old questions can't be
-                // answered twice.
-                answered={
-                  m.role === "agent" &&
-                  m.kind === "tool" &&
-                  messages.slice(i + 1).some((x) => x.role === "user")
-                }
+                // answered twice. Memoized: only the card being answered
+                // flips its flag, the rest of the transcript skips
+                // re-rendering on every streamed chunk.
+                answered={answeredIds.has(m.id)}
                 onSendAnswer={sendAnswer}
               />
             ))}
@@ -661,7 +676,10 @@ function apply(
   }
   if (data.role === "system") return prev;
   if (data.kind === "text" || data.kind === "thought") {
-    const i = prev.findIndex((m) => m.id === data.id);
+    // Scanned from the end: the streaming message is virtually
+    // always the newest one, so a long transcript costs O(1)
+    // per chunk instead of O(n).
+    const i = findLastIndexById(prev, data.id);
     if (i !== -1) {
       const next = prev.slice();
       next[i] = data;
@@ -670,9 +688,7 @@ function apply(
     return [...prev, data];
   }
   if (data.kind === "tool") {
-    const i = prev.findIndex(
-      (m) => m.kind === "tool" && m.toolCallId === data.toolCallId,
-    );
+    const i = findLastIndex(prev, (m) => m.kind === "tool" && m.toolCallId === data.toolCallId);
     if (i !== -1) {
       const c = prev.slice();
       c[i] = data;
@@ -680,6 +696,22 @@ function apply(
     }
   }
   return [...prev, data];
+}
+
+/** Last index whose id matches, or -1. Reverse scan (see apply). */
+function findLastIndexById(prev: ChatMessage[], id: string): number {
+  for (let i = prev.length - 1; i >= 0; i--) {
+    if (prev[i].id === id) return i;
+  }
+  return -1;
+}
+
+/** Last index matching pred, or -1. Reverse scan (see apply). */
+function findLastIndex(prev: ChatMessage[], pred: (m: ChatMessage) => boolean): number {
+  for (let i = prev.length - 1; i >= 0; i--) {
+    if (pred(prev[i])) return i;
+  }
+  return -1;
 }
 
 // -----------------------------------------------------------------------

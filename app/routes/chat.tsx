@@ -149,6 +149,12 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       ...new Set([existing.agentName, f.agentName].filter(Boolean) as string[]),
     ];
     existing.agentName = names.length > 0 ? names.join(" · ") : undefined;
+    // Presets (fence profiles) merge the same way — the chip shows
+    // which fences serve this worktree.
+    const presets = [
+      ...new Set([existing.preset, f.preset].filter(Boolean) as string[]),
+    ];
+    existing.preset = presets.length > 0 ? presets.join(" · ") : undefined;
   }
   const grouped = Array.from(byPath.values());
 
@@ -257,6 +263,15 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     currentModelId: state.currentModelId,
     currentModeId: state.currentModeId,
     availableCommands: state.availableCommands,
+    // The supervisor preset the agent that owns THIS session
+    // runs under, plus the catalog's preset names for the
+    // fence picker. Absent (undefined) for one-shot acp-spawn
+    // agents — the drawer omits the picker then. Note this is
+    // the owning agent's state, not the grouped folder
+    // summary: a path can host several agents with different
+    // fences, and the picker switches the one hosting the chat.
+    preset: state.preset ?? undefined,
+    presetOptions: state.presetOptions ?? undefined,
   };
 }
 

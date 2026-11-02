@@ -98,6 +98,9 @@ class SessionManager {
     path: string;
     agentUrl: string;
     agentName?: string;
+    preset?: string;
+    presetOptions?: string[];
+    supervisor?: { port: number; token?: string };
   }): Promise<FolderState> {
     const path = normalizeFolder(opts.path);
     const key = agentKey(path, opts.agentName);
@@ -109,6 +112,12 @@ class SessionManager {
     // just refresh the liveness bookkeeping and the heartbeat.
     if (existing && existing.agentUrl === opts.agentUrl) {
       if (opts.agentName !== undefined) existing.agentName = opts.agentName;
+      // A preset differing from the held one means a fence switch
+      // happened (drawer or set-CLI): clear what the old fence
+      // cached and resync from the new agent.
+      this.sweepPresetChange(existing, opts.preset);
+      existing.presetOptions = opts.presetOptions;
+      existing.supervisor = opts.supervisor;
       // A successful registration POST is itself proof of life.
       existing.lastSeenAt = Date.now();
       if (existing.status === "degraded") existing.status = "ok";
@@ -138,6 +147,9 @@ class SessionManager {
       this.clients.set(key, client);
       existing.agentUrl = opts.agentUrl;
       if (opts.agentName !== undefined) existing.agentName = opts.agentName;
+      this.sweepPresetChange(existing, opts.preset);
+      existing.presetOptions = opts.presetOptions;
+      existing.supervisor = opts.supervisor;
       // client.start() completed the initialize handshake: the
       // agent answered, so it is alive.
       existing.lastSeenAt = Date.now();
@@ -156,6 +168,9 @@ class SessionManager {
       sessions: new Map(),
       activeSessionId: null,
       availableCommands: [],
+      preset: opts.preset,
+      presetOptions: opts.presetOptions,
+      supervisor: opts.supervisor,
       availableModels: [],
       availableModes: [],
       currentModeId: null,
@@ -166,6 +181,75 @@ class SessionManager {
 
     this.startHeartbeat(key);
     return state;
+  }
+
+  /**
+   * A re-registration arriving with a preset that differs from the
+   * held one is a completed fence switch (drawer PATCH or the
+   * set-CLI): the desired state was rewritten agent-side and a new
+   * child is already running. Everything the old fence cached is
+   * now a lie — the session/list TTL cache (the new command may
+   * keep its store elsewhere), the model/mode/command
+   * advertisements — so clear them and replay the held sessions
+   * from agent truth; open tabs get a resync snapshot. Caller
+   * updates presetOptions/supervisor afterwards; this owns the
+   * preset field itself.
+   */
+  private sweepPresetChange(
+    existing: FolderState,
+    incoming: string | undefined,
+  ): void {
+    if (existing.preset === incoming) return;
+    console.log(
+      `[sessions] ${existing.path} (${identityOf(existing)}): fence switched` +
+        ` ${JSON.stringify(existing.preset ?? null)} → ${JSON.stringify(incoming ?? null)},` +
+        ` clearing caches`,
+    );
+    this.dropAgentCaches(existing);
+    existing.preset = incoming;
+  }
+
+  /**
+   * Drop every cached view of one agent — the session/list TTL
+   * cache, the advertised models / modes / commands, and the
+   * held transcripts (replayed from agent truth; open tabs get
+   * a resync snapshot). This is the clearing body shared by the
+   * fence-switch sweep and the manual "Clear cache" affordance
+   * (model drawer + PATCH /api/folders): same sweep, no preset
+   * change.
+   */
+  private dropAgentCaches(existing: FolderState): void {
+    const key = agentKey(existing.path, existing.agentName);
+    this.invalidateListCache(key);
+    existing.availableModels = [];
+    existing.availableModes = [];
+    existing.availableCommands = [];
+    existing.currentModelId = null;
+    existing.currentModeId = null;
+    // Replay held sessions against the (already-started) client:
+    // sessions the agent doesn't report are skipped, the rest
+    // are reloaded and live viewers resnapshotted. Overlapped
+    // resyncs are guarded in resyncFolder.
+    void this.resyncFolder(existing);
+  }
+
+  /**
+   * Manual cache clear for one agent (the model drawer's
+   * "Clear cache"). Resolves like the preset switch does: by
+   * the chat's session id first, else by agent name, else the
+   * path's unique agent. Returns the agent identity that was
+   * cleared, or undefined when nothing resolved.
+   */
+  clearAgentCaches(
+    folder: string,
+    opts: { sessionId?: string; name?: string } = {},
+  ): { agent: string } | undefined {
+    const target = opts.sessionId
+      ? this.lookupSession(folder, opts.sessionId)?.state
+      : this.getFolder(folder, opts.name);
+    if (!target) return undefined;
+    this.dropAgentCaches(target);
+    return { agent: identityOf(target) };
   }
 
   /**
@@ -1624,6 +1708,26 @@ export interface FolderState {
   currentModeId: string | null;
   /** Currently active model id, mirrored from current_model_update. */
   currentModelId: string | null;
+  /**
+   * Supervisor awareness (absent for one-shot `acp-spawn`
+   * agents — they have no preset to switch). Carried by the
+   * registration POST:
+   *
+   *   `preset`        which preset in the supervisor's config
+   *                   catalog launched this agent (its fenced
+   *                   command lives supervisor-side, raw
+   *                   commands never cross the API)
+   *   `presetOptions` the catalog's preset names — the fence
+   *                   picker's options
+   *   `supervisor`    the supervisor daemon's loopback API
+   *                   coordinates ({ port, token? }) so Voir can
+   *                   proxy preset switches. `token` must never
+   *                   reach the browser; folderSummary
+   *                   deliberately omits the whole field.
+   */
+  preset?: string;
+  presetOptions?: string[];
+  supervisor?: { port: number; token?: string };
 }
 
 type SessionListener = (msg: ChatMessage) => void;
@@ -1707,6 +1811,11 @@ export function folderSummary(state: FolderState): FolderSummary {
     agentName: state.agentName,
     agentUrl: state.agentUrl,
     registeredAt: state.registeredAt,
+    // Preset names only — the raw supervisor commands and the
+    // proxy bearer token stay server-side (FolderState holds
+    // them under `supervisor`, which is deliberately NOT here).
+    preset: state.preset,
+    presetOptions: state.presetOptions,
     status: state.status,
     lastSeenAt: state.lastSeenAt,
     sessions: Array.from(state.sessions.values())

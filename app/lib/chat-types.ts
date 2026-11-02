@@ -170,6 +170,15 @@ export interface FolderSummary {
   agentName?: string;
   agentUrl: string;
   registeredAt: number;
+  /**
+   * The supervisor preset this agent's command comes from
+   * (undefined for one-shot `acp-spawn` agents — no preset, no
+   * switch). Names only: the raw commands and the supervisor
+   * proxy token stay server-side in the session manager.
+   */
+  preset?: string;
+  /** The supervisor catalog's other preset names — fence-picker options. */
+  presetOptions?: string[];
   /** Agent-leg liveness: `degraded` while heartbeats are failing. */
   status: "ok" | "degraded";
   /** Epoch ms of the last successful heartbeat ping. */

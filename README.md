@@ -350,6 +350,35 @@ something in front of it: a reverse proxy (Caddy, nginx, Traefik) with
 auth (OIDC, basic auth, mTLS, a Cloudflare Tunnel — whatever fits).
 Don't publish this to the internet as-is.
 
+## Observability (estate App APM)
+
+Voir follows the estate observability pattern
+(`~/code/infra/observability/faro-recipe.md`): frontend telemetry via the
+Grafana Faro Web SDK (`app/faro.ts`, initialized first in
+`app/entry.client.tsx`), one server span + an `http_request` JSON log line
+per request via `app/lib/otel.server.ts` and
+`app/lib/request-log.server.ts` (registered first in `bin/server.ts`).
+The faro SDK propagates `traceparent` on every same-origin fetch, so
+backend spans join the browser's trace — one Tempo trace per request,
+and every error line in Loki links into it. The one join name everywhere
+is **`voir`** (faro `app_name` = `OTEL_SERVICE_NAME` = the k8s pod label).
+
+Enablement is env-driven, never hardcoded:
+
+- Frontend: `VITE_FARO_*` vars (`.env` here, Docker build args for image
+  builds — see the Dockerfile), baked at `npm run build` time.
+- Backend: `OTEL_SERVICE_NAME=voir` + `OTEL_EXPORTER_OTLP_ENDPOINT`
+  (in-cluster `http://tempo.monitoring.svc.cluster.local:4318`; devbox gets
+  the tailnet NodePort `http://100.66.57.52:30093`). Unset endpoint →
+  tracing off, zero overhead.
+- Dashboard: **App APM** (`app-apm`) on
+  https://grafana.stackunderflow.no — voir appears in its `$app` picker
+  as soon as an instrumented browser ships an event. `/healthz` is served
+  but never logged or traced (k8s probes are noise).
+- Dev note: `npm run dev` (vite) has no span middleware — frontend telemetry
+  only; the express server shape (`bin/server.ts`, used by the devbox
+  systemd unit and the Docker image) is where backend tracing lives.
+
 ## What it is and isn't
 
 **It is:**

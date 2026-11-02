@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   isRouteErrorResponse,
   Links,
@@ -78,6 +79,22 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     details = error.message;
     stack = error.stack;
   }
+
+  // Report to faro: errors caught by React Router boundaries never
+  // reach window.onerror (React swallows them), so without this the
+  // "Oops!" page is invisible in the frontend telemetry — the user
+  // hits exactly that blind spot when a server 500 renders this
+  // boundary (faro shows nothing; only the Tempo server span knows).
+  // The lazy import keeps the faro SDK out of the SSR graph —
+  // effects only run in the browser.
+  useEffect(() => {
+    void import("./faro").then((m) =>
+      m.reportBoundaryError(error, {
+        // status for route-error Responses, message for thrown Errors
+        status: isRouteErrorResponse(error) ? String(error.status) : undefined,
+      }),
+    );
+  }, [error]);
 
   return (
     <main className="mx-auto max-w-2xl p-8">

@@ -22,6 +22,10 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { attachVoiceServer } from "../app/lib/voice-server.ts";
 import { attachTtsServer } from "../app/lib/tts-server.ts";
+// Estate observability (OBSERVABILITY.md §4.8): one SERVER span per request
+// that joins the browser trace via the faro-propagated traceparent header,
+// and an http_request log line carrying trace_id/span_id (Tempo links).
+import { requestLog } from "../app/lib/request-log.server.ts";
 
 // ---------------------------------------------------------------------
 // .env — dotenv-style, shell env wins
@@ -80,6 +84,10 @@ const app = express();
 // Origin. Unproxied access (localhost:9000) is unaffected:
 // no X-Forwarded-* headers, express falls back to the socket.
 app.set("trust proxy", true);
+// Request log + span FIRST so every request is covered (health excluded
+// inside). The k8s readiness probe hits /healthz — never traced or logged.
+app.use(requestLog);
+app.get("/healthz", (_req, res) => res.json({ ok: true }));
 // Static assets from the client build (JS/CSS chunks, the PWA
 // manifest, service worker, icons, the pcm worklet). Falls
 // through to the React Router handler for anything else.

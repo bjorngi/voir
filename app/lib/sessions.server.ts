@@ -541,7 +541,21 @@ class SessionManager {
     const known = new Set<string>();
     let answered = 0;
     for (const state of agents) {
-      const list = await this.cachedList(state);
+      let list: SessionListEntry[];
+      try {
+        list = await this.cachedList(state);
+      } catch (err) {
+        // One dead agent must not blank the whole path (the
+        // supervisor-restart case: rebooting agents' bridges
+        // refuse or 504 after their 30s RPC timeout). Degrade
+        // the agent — its in-memory sessions still merge below
+        // — and keep going with the rest.
+        this.degradeAgent(
+          state,
+          (err as Error)?.message ?? String(err),
+        );
+        list = [];
+      }
       answered++;
       for (const entry of list) {
         if (!entry.sessionId) continue;
@@ -585,6 +599,32 @@ class SessionManager {
 
   getSession(folder: string, sessionId: string): SessionState | undefined {
     return this.sessionAgent(folder, sessionId)?.sessions.get(sessionId);
+  }
+
+  /**
+   * Flip every agent under `path` to `degraded`. Called from the
+   * navigation path (routes/chat.tsx loader) when an agent RPC
+   * fails — the supervisor-restart case: bridges of rebooting
+   * agents 504 or refuse connections, and a failing agent must
+   * degrade its folder (offline pill, in-memory sessions kept)
+   * instead of 500ing the whole page. The heartbeat flips the
+   * status back on its next successful ping and resyncs from agent
+   * truth (see startHeartbeat), so this is self-healing.
+   */
+  markDegraded(folder: string, reason: string): void {
+    for (const state of this.agentsUnder(folder)) {
+      this.degradeAgent(state, reason);
+    }
+  }
+
+  /** The per-agent flip shared by markDegraded and listSessions. */
+  private degradeAgent(state: FolderState, reason: string): void {
+    if (state.status !== "degraded") {
+      state.status = "degraded";
+      console.warn(
+        `[sessions] ${state.path} (${identityOf(state)}) degraded: ${reason}`,
+      );
+    }
   }
 
   /**

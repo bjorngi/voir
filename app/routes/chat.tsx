@@ -53,8 +53,51 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   // RPC result is TTL-cached in the session manager (see
   // sessions.server.ts), so repeated navigations don't
   // re-trigger the agent-side full-store scan.
+  //
+  // One degraded agent must never 500 the page — on a
+  // supervisor restart (agents rebooting → bridges refuse or
+  // 504 after their 30s RPC timeout) this pass used to throw
+  // and render the root "Oops!" page instead of the dashboard.
+  // Degrade the path instead: the folder tree shows its
+  // offline pill, in-memory sessions still render, and the
+  // heartbeat/re-registration resyncs when the agent is back.
+  //
+  // Two bounds keep the dashboard fast while an agent boots
+  // (its bridge accepts connections but the child stays silent
+  // for tens of seconds):
+  //   - LIST_WAIT_MS — a cold session/list is "hundreds of ms
+  //     to seconds" (see sessions.server.ts); past 10s the
+  //     agent is not answering THIS navigation, so degrade and
+  //     paint. The shared in-flight RPC keeps running and
+  //     warms the TTL cache once the agent finishes booting.
+  //   - already-degraded folders are skipped outright, else
+  //     every navigation would re-pay the wait against a
+  //     booting agent until its bridge 504s.
+  const LIST_WAIT_MS = 10_000;
   const paths = [...new Set(states.map((s) => s.path))];
-  await Promise.all(paths.map((p) => sessionManager.listSessions(p)));
+  await Promise.all(
+    paths.map(async (path) => {
+      const agents = states.filter((s) => s.path === path);
+      if (agents.length > 0 && agents.every((a) => a.status === "degraded")) {
+        return;
+      }
+      try {
+        await Promise.race([
+          sessionManager.listSessions(path),
+          sleep(LIST_WAIT_MS).then(() => {
+            throw new Error(
+              `session/list did not answer in ${LIST_WAIT_MS}ms`,
+            );
+          }),
+        ]);
+      } catch (err) {
+        sessionManager.markDegraded(
+          path,
+          (err as Error)?.message ?? String(err),
+        );
+      }
+    }),
+  );
   // Cheap per-folder diff summaries for the root view's
   // `+N -M` tag. The git invocations don't depend on each
   // other and they're all <100ms for typical worktrees — but
@@ -173,11 +216,20 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   // chat
   // Resolve the (path, sessionId) pair to its agent. Handles the
   // in-memory case, replays empty stubs, and probes each agent
-  // under the path for sessions voir doesn't know yet.
-  const found = await sessionManager.findOrLoadSession(
-    p.folder,
-    p.sessionId,
-  );
+  // under the path for sessions voir doesn't know yet. A failing
+  // agent leg (bridge down/booting, e.g. during a supervisor
+  // restart) degrades the folder and falls through to the same
+  // recovery as an unknown session — never the root "Oops!" page.
+  let found: Awaited<ReturnType<typeof sessionManager.findOrLoadSession>> =
+    undefined;
+  try {
+    found = await sessionManager.findOrLoadSession(p.folder, p.sessionId);
+  } catch (err) {
+    sessionManager.markDegraded(
+      p.folder,
+      (err as Error)?.message ?? String(err),
+    );
+  }
   if (!found) {
     return redirectToFreshOrSessions(p.folder, grouped, folder);
   }
@@ -260,6 +312,11 @@ export async function action({ params, request }: Route.ActionArgs) {
     return { ok: true };
   }
   return { error: "Not found" };
+}
+
+/** Timer helper for the loader's bounded session/list wait. */
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /**

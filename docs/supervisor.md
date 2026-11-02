@@ -43,7 +43,34 @@ Default path: `~/.config/voir/supervisor.json` (override:
 ```
 
 Reloaded on `SIGHUP` (presets and ui only) — edit and
-`pkill -HUP voir-supervisor` to apply without a restart.
+`pkill -HUP voir-supervisor` to apply without a restart. The
+next re-registration to Voir (within 30s) carries the change.
+
+### Registration payload — supervisor awareness
+
+An agent the supervisor launched registers with more than
+`path`, `agentUrl` and `agentName`. The POST to Voir also
+carries the fence switching bookkeeping:
+
+```jsonc
+{
+  "path": "/home/bjorn/code/infra",
+  "agentUrl": "http://127.0.0.1:43127/",
+  "agentName": "infra",
+  "preset": "pi-fenced",                // which preset launched it
+  "presetOptions": ["pi", "pi-fenced"], // the catalog's names
+  "supervisor": { "port": 7420, "token": "…" } // the daemon's loopback API
+}
+```
+
+The raw preset commands never cross the API — Voir only ever
+learns preset *names* and how to reach the daemon (it proxies
+switches through it; see [Switching a preset from Voir](#switching-a-preset-from-voir)).
+When `apiToken` is configured, the token is part of this
+payload — it crosses to Voir over the registration POST and is
+held server-side only (`FolderState.supervisor`, never the
+browser). One-shot `acp-spawn` agents send none of this; Voir
+treats them as having no fence to switch.
 
 **Not supported today:** per-agent `--bind`/`--url` overrides (the
 containerized case). The supervisor always binds bridges on
@@ -140,6 +167,15 @@ POST /agents               → 201 { name }
      400 unknown preset (response lists the available names)
      400 not a directory
      409 name already in use
+PATCH /agents/<name|dir>   → 200 { name, preset, previous, changed } | 404
+     body: { preset }
+     switches the agent's preset: desired state is rewritten, the
+     child is stopped and immediately restarted under the new
+     command (Voir is NOT unregistered — the folder stays, the
+     new child's registration swaps the agent leg under open
+     chats). Crash bookkeeping is cleared; an errored entry
+     gets a fresh attempt under the new preset. A refused
+     switch (unknown preset) writes nothing.
 DELETE /agents/<name|dir>  → 200 { removed }   | 404
 ```
 
@@ -152,6 +188,7 @@ running — e.g. waiting on its restart backoff).
 ```
 voir-supervisor run                          # the daemon (default subcommand)
 voir-supervisor add <dir> --preset <p> [--name <n>]
+voir-supervisor set <name|dir> --preset <p>  # switch the preset, restart
 voir-supervisor rm <name|dir>
 voir-supervisor ls
 ```
@@ -164,20 +201,71 @@ requires inventing a name.
 Flags: `--config`, `--state`, `--api-port` (all with the defaults
 above). `add` expands `~` in `<dir>`.
 
-Behavior when the daemon is up: `add`/`rm`/`ls` go through the
-API — add triggers an immediate launch, rm stops and unregisters
-the agent.
+Behavior when the daemon is up: `add`/`set`/`rm`/`ls` go through
+the API — add triggers an immediate launch, set restarts the
+agent under the new preset, rm stops and unregisters it.
 
 Behavior when the daemon is down: `add` validates the preset
 against the config and appends to the state file directly, then
-says so ("it will start on next boot"); `rm` rewrites the state
-file; `ls` lists the desired state. The daemon converges on its
-next boot. Desired state is always the truth; the daemon is just
-the thing that makes it true.
+says so ("it will start on next boot"); `set` validates and
+rewrites the entry in place (apply on next boot); `rm` rewrites
+the state file; `ls` lists the desired state. The daemon
+converges on its next boot. Desired state is always the truth;
+the daemon is just the thing that makes it true.
 
 One-shot agents (`acp-spawn` in a scratch worktree) are invisible
 to the supervisor by design: they never appear in the state file,
 never get restarted, and die with their terminal.
+
+The folder appears in Voir within seconds (registration), and
+again after every Voir restart (30s re-registration), every
+machine reboot (run the daemon from systemd), and every agent
+crash (backoff restart).
+
+## Switching a preset from Voir
+
+The fence an agent runs under is not frozen at launch. Where
+the preset catalog defines the fleet, the chat's model/mode
+drawer carries a third select — **Fence** — listing the
+catalog's presets. Pick one and:
+
+1. the chat POSTs `PATCH /api/folders` with the path, the
+   session id and the preset;
+2. Voir resolves the agent that owns that chat (even when
+   several agents share the worktree) and proxies the switch
+   to the supervisor's loopback API (`PATCH /agents/<key>`,
+   bearer when configured) — `app/lib/supervisor-proxy.server.ts`;
+3. the supervisor validates the preset against its catalog,
+   rewrites the desired state, and restarts the agent under
+   the new command immediately.
+
+The agent identity (path + name) survives the switch, so open
+chats keep their session: Voir never sees an unregister — the
+new child's registration swaps the agent leg under the live
+connection (the same self-heal path an agent crash uses, minus
+the crash). An in-flight turn dies like one. The CLI
+equivalent is `voir-supervisor set <name|dir> --preset <p>`.
+
+**What Voir clears on a switch.** Voir detects the completed
+switch at the restarted agent's re-registration (its POST now
+names a different preset). Everything the old fence cached is
+dropped: the session/list TTL cache (a different fence profile
+may keep its store elsewhere), the advertised models / modes /
+commands, and the transcripts — replayed from agent truth, with
+open tabs resnapshooting. The folder list reads fences, not
+agent names: the row chip shows the preset (the agent's
+generated name only ever shows when the agent isn't
+supervisor-managed). The same clearing is available on demand:
+the model drawer's bottom row — **Clear cache** — POSTs
+`PATCH /api/folders { cache: "clear" }` and re-syncs this chat's
+agent without touching the preset.
+
+One-shot `acp-spawn` agents have no preset and no picker —
+restart them with the command you want instead. Voir's PATCH
+is a proxy, not a policy: on a host where Voir has no auth, a
+preset switch is as reachable as every other endpoint (prompt,
+cancel, unregister) — put auth in front of Voir before
+exposing it.
 
 ## Walkthrough: a machine's first run
 
@@ -225,13 +313,19 @@ systemctl --user enable --now voir-supervisor
 ## Not in scope today
 
 - **Auth between supervisor and Voir** — registration is
-  unauthenticated, same as the one-shot launcher. The token story
-  (registration token, bridge bearer auth) is a separate change
-  that lands before any remote-machine setup.
+  unauthenticated, same as the one-shot launcher. The token
+  story (registration token, bridge bearer auth) is a separate
+  change that lands before any remote-machine setup. The
+  `apiToken` (Voir → supervisor, for the preset-switch proxy)
+  exists and travels to Voir in the registration payload; see
+  the payload section above.
 - **Launch from the Voir UI** — deliberately deferred; the API
-  above is the entire seam such a flow needs.
+  is the seam such a flow needs. (Preset *switching* from Voir
+  is in — same seam, one PATCH.)
 - **Containerized agents** — no `--bind`/`--url` pass-through;
-  use one-shot `acp-spawn` in compose today.
+  use one-shot `acp-spawn` in compose today. For the same
+  reason the switch proxy targets `127.0.0.1` only: it covers
+  the supported on-host deployment.
 - **Cluster anything** — one supervisor per machine, no
   supervisor-to-supervisor awareness. Voir's sidebar is the only
   place the fleet is ever seen together.

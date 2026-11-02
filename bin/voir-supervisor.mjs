@@ -119,8 +119,15 @@ class Supervisor {
     this.agents = [];
     /** name → run record */
     this.running = new Map();
+    /** name → in-flight start promises (shared, never duplicated) */
+    this.starting = new Map();
     /** name → crash bookkeeping */
     this.crashes = new Map();
+    /** name → pending restart-backoff setTimeout handles. Cleared
+     * when the agent starts or is stopped another way, so a
+     * scheduled restart can never fire under an agent that a
+     * state-file event or a preset switch already relaunched. */
+    this.restartTimers = new Map();
     this.startedAt = Date.now();
     this.shuttingDown = false;
   }
@@ -145,6 +152,20 @@ class Supervisor {
   /** The effective command for an entry, or null if the preset is gone. */
   commandFor(entry) {
     return this.presets[entry.preset] ?? null;
+  }
+
+  /**
+   * Loopback API coordinates handed to Voir at registration so
+   * it can proxy preset switches (PATCH /api/folders → this
+   * daemon). The raw preset commands never cross any API;
+   * Voir only ever learns which port to hit and — when a token
+   * is configured — the bearer that unlocks it.
+   */
+  supervisorCoords() {
+    return {
+      port: this.apiPort,
+      ...(this.apiToken ? { token: this.apiToken } : {}),
+    };
   }
 
   // -- Reconciliation ------------------------------------------------
@@ -183,6 +204,34 @@ class Supervisor {
 
   async startAgent(entry, cmd, reason = "boot") {
     const key = this.entryKey(entry);
+    // Idempotence guard, both arms: a pending crash-backoff
+    // timer, a state-file hand-edit and a preset switch are all
+    // async paths that can race — none of them may double-start
+    // a key (the second record would clobber the first and leak
+    // its bridge port + orphan its child). In-flight starts are
+    // shared, not duplicated.
+    const inflight = this.starting.get(key);
+    if (inflight) return inflight;
+    if (this.running.has(key)) return Promise.resolve();
+    const pending = this.restartTimers.get(key);
+    if (pending) {
+      clearTimeout(pending);
+      this.restartTimers.delete(key);
+    }
+    const p = this.launchEntry(entry, cmd, reason).finally(() =>
+      this.starting.delete(key),
+    );
+    this.starting.set(key, p);
+    // Rejections are returned to the caller too; this only
+    // stops the fire-and-forget variants from crashing the
+    // process with an unhandled rejection.
+    p.catch(() => {});
+    return p;
+  }
+
+  /** The actual start (shared by all startAgent callers) */
+  async launchEntry(entry, cmd, reason) {
+    const key = this.entryKey(entry);
     if (!existsSync(entry.dir) || !statSync(entry.dir).isDirectory()) {
       log(`${key}: directory ${entry.dir} does not exist, skipping`);
       return;
@@ -198,6 +247,16 @@ class Supervisor {
       folder: entry.dir,
       agentUrl: agent.agentUrl,
       agentName: key,
+      // Built per POST (see acp-lib): supervisor awareness for
+      // Voir — which preset runs here, the catalog's preset
+      // names, and how Voir reaches this daemon's API. The
+      // entry is captured by reference, so a preset switched
+      // in place shows up on the next re-registration.
+      describe: () => ({
+        preset: entry.preset,
+        presetOptions: Object.keys(this.presets),
+        supervisor: this.supervisorCoords(),
+      }),
     });
     // register() retries forever on its own; the supervisor
     // doesn't block convergence on the UI being reachable.
@@ -246,7 +305,8 @@ class Supervisor {
 
     const delay = c.backoff;
     c.backoff = Math.min(RESTART_BACKOFF_CAP_MS, c.backoff * 2);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      this.restartTimers.delete(key);
       if (this.shuttingDown) return;
       const entry = this.agents.find((e) => this.entryKey(e) === key);
       const cmd = entry && this.commandFor(entry);
@@ -255,16 +315,33 @@ class Supervisor {
         (err) => log(`${key}: failed to restart: ${err.message}`),
       );
     }, delay);
+    this.restartTimers.set(key, timer);
   }
 
-  async stopAgent(key, run) {
+  /**
+   * Stop one agent. `unregister` defaults true — the agent is
+   * *leaving* (rm, shutdown, no longer desired) so the Voir
+   * folder must go with it. A preset switch passes false: the
+   * agent is coming back under the same identity momentarily,
+   * and Voir must keep holding the folder + in-memory sessions
+   * so the new child's registration swaps the agent leg under
+   * live chats instead of orphaning them.
+   */
+  async stopAgent(key, run, unregister = true) {
     run.registrar?.stop();
-    try {
-      await run.registrar?.unregister();
-    } catch {}
+    if (unregister) {
+      try {
+        await run.registrar?.unregister();
+      } catch {}
+    }
     run.agent?.stop();
     this.running.delete(key);
     this.crashes.delete(key);
+    const pending = this.restartTimers.get(key);
+    if (pending) {
+      clearTimeout(pending);
+      this.restartTimers.delete(key);
+    }
   }
 
   async shutdown() {
@@ -391,9 +468,9 @@ class Supervisor {
           this.reconcile();
           return json(201, { name: key });
         }
-        const rmMatch = u.pathname.match(/^\/agents\/([^/]+)$/);
-        if (req.method === "DELETE" && rmMatch) {
-          const key = decodeURIComponent(rmMatch[1]);
+        const agentMatch = u.pathname.match(/^\/agents\/([^/]+)$/);
+        if (req.method === "DELETE" && agentMatch) {
+          const key = decodeURIComponent(agentMatch[1]);
           const idx = this.agents.findIndex(
             (e) => this.entryKey(e) === key || e.dir === key,
           );
@@ -402,6 +479,60 @@ class Supervisor {
           this.saveState();
           this.reconcile();
           return json(200, { removed: key });
+        }
+        // Switch an agent's preset. Desired state is rewritten
+        // (same name → same Voir identity), the child is stopped
+        // and reconciled back up under the new command — the open
+        // chat drops and heals like any agent restart, sessions
+        // survive (they live agent-side). Voir is NOT
+        // unregistered: the old folder must stay so the new
+        // child's registration swaps the leg under it.
+        if (req.method === "PATCH" && agentMatch) {
+          const key = decodeURIComponent(agentMatch[1]);
+          const chunks = [];
+          for await (const c of req) chunks.push(c);
+          const body = JSON.parse(Buffer.concat(chunks).toString());
+          const preset = typeof body.preset === "string" ? body.preset : null;
+          if (!preset) {
+            return json(400, { error: "'preset' is required" });
+          }
+          if (!(preset in this.presets)) {
+            return json(400, {
+              error: `Unknown preset ${JSON.stringify(preset)}`,
+              available: Object.keys(this.presets),
+            });
+          }
+          const entry = this.agents.find(
+            (e) => this.entryKey(e) === key || e.dir === key,
+          );
+          if (!entry) return json(404, { error: `No agent ${JSON.stringify(key)}` });
+          const previous = entry.preset;
+          if (previous === preset) {
+            return json(200, {
+              name: this.entryKey(entry),
+              preset,
+              previous,
+              changed: false,
+            });
+          }
+          entry.preset = preset;
+          this.saveState();
+          // A fresh preset is a fresh attempt: clear the crash
+          // bookkeeping so a crashed-out (errored) entry gets a
+          // real chance under its new command.
+          this.crashes.delete(key);
+          const run = this.running.get(key);
+          if (run) await this.stopAgent(key, run, false);
+          this.reconcile();
+          log(
+            `${key}: preset ${JSON.stringify(previous)} → ${JSON.stringify(preset)}, restarting`,
+          );
+          return json(200, {
+            name: this.entryKey(entry),
+            preset,
+            previous,
+            changed: true,
+          });
         }
         return json(404, { error: "not found" });
       } catch (err) {
@@ -537,6 +668,8 @@ Commands:
   run                    run the daemon (default when no command given)
   add <dir> --preset <p> [--name <n>]   launch an agent in <dir> and
                                         persist it in the state file
+  set <name|dir> --preset <p>           switch the agent's preset —
+                                        restarts it under the new command
   rm <name|dir>          stop the agent and remove it from state
   ls                     list desired + running agents
 
@@ -557,6 +690,28 @@ Config file (authored by you, read by the daemon):
 The state file is desired state — what SHOULD be running. The
 supervisor writes it atomically on add/rm and converges to it on
 boot, crash, and every change (hand edits included).`);
+}
+
+/**
+ * The fleet is read by preset + dir — which fence runs where.
+ * The identity name is plumbing (rm/set still take it, Voir
+ * keys the agent by path + name), so it is only spelled out
+ * when several agents share one dir and `rm <dir>` would be
+ * ambiguous.
+ */
+function printAgents(rows) {
+  const dirs = new Map();
+  for (const r of rows) dirs.set(r.dir, (dirs.get(r.dir) ?? 0) + 1);
+  for (const r of rows) {
+    const glyph =
+      r.status === "running" ? "▶" : r.status === "errored" ? "✗" : "·";
+    const several = (dirs.get(r.dir) ?? 0) > 1;
+    console.log(
+      `${glyph} ${String(r.preset ?? "?").padEnd(16)} ${r.dir}` +
+        (several ? `  (name: ${r.name})` : "") +
+        (r.crashes > 0 ? `  (crashes: ${r.crashes})` : ""),
+    );
+  }
 }
 
 async function main() {
@@ -654,25 +809,79 @@ async function main() {
     return;
   }
 
+  if (cmd === "set") {
+    const key = positional[1];
+    if (!key || !flags.preset) die("usage: set <name|dir> --preset <p>");
+    const daemon = await findDaemon(paths.state);
+    if (daemon) {
+      const res = await fetch(
+        `http://127.0.0.1:${daemon.port}/agents/${encodeURIComponent(key)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            ...(daemon.token ? { Authorization: `Bearer ${daemon.token}` } : {}),
+          },
+          body: JSON.stringify({ preset: flags.preset }),
+        },
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) die(body.error ?? `set failed (${res.status})`, 1);
+      if (body.changed === false) {
+        console.log(`${body.name}: already on ${body.preset}`);
+      } else {
+        console.log(
+          `${body.name}: ${body.previous} → ${body.preset} — restarting under the new command`,
+        );
+      }
+      return;
+    }
+    // Daemon not running: validate against the config and edit
+    // the desired state directly. The supervisor converges on
+    // its next boot.
+    const config = readJson(paths.config, null);
+    if (config?.presets && !(flags.preset in config.presets)) {
+      die(
+        `unknown preset ${JSON.stringify(flags.preset)} — available: ` +
+          Object.keys(config.presets).join(", "),
+        1,
+      );
+    }
+    const agents = readJson(paths.state, []);
+    if (!Array.isArray(agents)) die(`invalid state file at ${paths.state}`, 1);
+    const idx = agents.findIndex(
+      (e) => (e.name ?? e.preset) === key || e.dir === key,
+    );
+    if (idx === -1) {
+      die(`no state entry ${JSON.stringify(key)} in ${paths.state}`, 1);
+    }
+    agents[idx] = { ...agents[idx], preset: flags.preset };
+    atomicWriteJson(paths.state, agents);
+    console.log(
+      `wrote preset ${JSON.stringify(flags.preset)} for ${key} to ${paths.state}` +
+        ` — supervisor not running; it will restart the agent under the new` +
+        ` command on next boot`,
+    );
+    return;
+  }
+
   if (cmd === "ls") {
     const daemon = await findDaemon(paths.state);
     if (daemon) {
       const res = await fetch(`http://127.0.0.1:${daemon.port}/agents`);
       const body = await res.json();
-      for (const a of body.agents) {
-        console.log(
-          `${a.status === "running" ? "▶" : a.status === "errored" ? "✗" : "·"} ` +
-            `${a.name.padEnd(16)} ${a.preset.padEnd(12)} ${a.dir}` +
-            (a.crashes > 0 ? `  (crashes: ${a.crashes})` : ""),
-        );
-      }
+      printAgents(body.agents);
       return;
     }
-    const agents = readJson(paths.state, []);
     console.log("supervisor not running; desired state:");
-    for (const e of agents) {
-      console.log(`· ${(e.name ?? e.preset).padEnd(16)} ${e.preset.padEnd(12)} ${e.dir}`);
-    }
+    const agents = readJson(paths.state, []);
+    printAgents(
+      agents.map((e) => ({
+        name: e.name ?? e.preset,
+        preset: e.preset,
+        dir: e.dir,
+      })),
+    );
     return;
   }
 

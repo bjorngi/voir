@@ -38,6 +38,29 @@ function findFreePort(): Promise<number> {
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
+/**
+ * Teardown: SIGTERM, then WAIT for the actual exit (poll, ~4s
+ * budget) before escalating. A test-file process owns the pipes
+ * its children run on: a SIGKILL that lands mid-shutdown can
+ * orphan a child (daemon → agents), the orphan keeps the pipe
+ * open, and the runner waits on the file process forever. The
+ * old fixed 300ms grace raced exactly that way, intermittently.
+ */
+function killSoon(child: ChildProcess, budgetMs = 4_000): Promise<void> {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve();
+    const t = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve();
+    }, budgetMs);
+    child.once("close", () => {
+      clearTimeout(t);
+      resolve();
+    });
+    child.kill("SIGTERM");
+  });
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function until(
@@ -58,6 +81,9 @@ interface Registration {
   agentName?: string;
   agentUrl?: string;
   name?: string;
+  preset?: string;
+  presetOptions?: string[];
+  supervisor?: { port: number; token?: string };
 }
 
 async function startStubVoir(): Promise<{
@@ -76,6 +102,9 @@ async function startStubVoir(): Promise<{
         path: body.path,
         agentName: body.agentName,
         agentUrl: body.agentUrl,
+        preset: body.preset,
+        presetOptions: body.presetOptions,
+        supervisor: body.supervisor,
       });
       res.writeHead(201, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ browse: `/f/${body.path}` }));
@@ -205,9 +234,7 @@ test("voir-supervisor: unnamed adds get generated, persisted identities", async 
       "generated-name agents never registered",
     );
   } finally {
-    sup.kill("SIGTERM");
-    await sleep(300);
-    sup.kill("SIGKILL");
+        await killSoon(sup);
     stub.server.close();
     stub.server.closeAllConnections();
   }
@@ -239,9 +266,7 @@ test("acp-spawn: no --name registers a generated identity", async () => {
     assert.equal(reg.method, "POST");
     assert.equal(reg.path, workdir);
   } finally {
-    child.kill("SIGTERM");
-    await sleep(300);
-    child.kill("SIGKILL");
+        await killSoon(child);
     stub.server.close();
     stub.server.closeAllConnections();
   }
@@ -307,9 +332,7 @@ test("voir-supervisor: a second daemon on the same port dies cleanly", async () 
     };
     assert.equal(disc.pid, a.pid, "discovery must still point at daemon A");
   } finally {
-    a.kill("SIGTERM");
-    await sleep(300);
-    a.kill("SIGKILL");
+        await killSoon(a);
     stub.server.close();
     stub.server.closeAllConnections();
   }
@@ -445,9 +468,239 @@ test("voir-supervisor: converges a fleet, restarts crashes, honors rm", async ()
     });
     assert.match(ls, /m2/, "CLI listing should include m2");
   } finally {
-    sup.kill("SIGTERM");
-    await sleep(300);
-    sup.kill("SIGKILL");
+        await killSoon(sup);
+    stub.server.close();
+    stub.server.closeAllConnections();
+  }
+});
+test("voir-supervisor: switching an agent's preset restarts it under the new command", async () => {
+  const workdir = await mkdtemp(join(tmpdir(), "voir-sup-switch-"));
+  const configPath = join(workdir, "config.json");
+  const statePath = join(workdir, "agents.json");
+  const apiPort = await findFreePort();
+
+  const stub = await startStubVoir();
+  const stubUrl = `http://127.0.0.1:${(stub.server.address() as { port: number }).port}`;
+  const mockCmd = `node ${join(ROOT, "bin/mock-acp.mjs")}`;
+  // A script that runs forever but speaks no ACP: the bridge comes
+  // up (that's the launcher's), the agent never answers a JSON-RPC
+  // request — the sharp runtime proof that the CHILD was swapped,
+  // not just the registration label. A file, not an inline -e:
+  // the launcher splits the command spec on whitespace, so a
+  // quoted argv would break (and, crashed, would loop-restart and
+  // spam registrations, which the assertions below count on not
+  // happening).
+  const sleeperPath = join(workdir, "sleep-forever.mjs");
+  await writeFile(sleeperPath, "setTimeout(() => {}, 1e9);\n");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      ui: stubUrl,
+      presets: { mock: mockCmd, sleeper: `node ${sleeperPath}` },
+    }),
+  );
+  await writeFile(
+    statePath,
+    JSON.stringify([{ dir: workdir, preset: "mock", name: "sw" }]),
+  );
+
+  const sup = startSupervisor(configPath, statePath, apiPort);
+  try {
+    const api = `http://127.0.0.1:${apiPort}`;
+    assert(
+      await until(() =>
+        (async () => {
+          try {
+            return (await fetch(`${api}/health`)).ok;
+          } catch {
+            return false;
+          }
+        })(),
+      ),
+      "daemon never came up",
+    );
+
+    // 1. Boot registration carries supervisor awareness: which
+    //    preset runs, the catalog's names, and the loopback API
+    //    coordinates a proxy needs (no raw commands anywhere).
+    assert(
+      await until(() =>
+        stub.registrations.some((r) => r.method === "POST" && r.agentName === "sw"),
+      ),
+      "sw never registered",
+    );
+    const first = stub.registrations.find((r) => r.agentName === "sw")!;
+    assert.equal(first.preset, "mock");
+    assert.deepEqual(
+      (first.presetOptions ?? []).slice().sort(),
+      ["mock", "sleeper"],
+    );
+    assert.equal(first.supervisor?.port, apiPort);
+    assert.equal(first.supervisor?.token, undefined, "no token configured — none may be sent");
+
+    // The supervised bridge answers the health probe (child alive).
+    const ping = await fetch(first.agentUrl!, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "ping" }),
+    });
+    assert.equal(ping.status, 204);
+
+    // 2. Switch to the sleeper preset via the API.
+    const patch = await fetch(`${api}/agents/sw`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preset: "sleeper" }),
+    });
+    assert.equal(patch.status, 200);
+    const patchBody = (await patch.json()) as {
+      name: string;
+      preset: string;
+      previous: string;
+      changed: boolean;
+    };
+    assert.equal(patchBody.name, "sw");
+    assert.equal(patchBody.previous, "mock");
+    assert.equal(patchBody.preset, "sleeper");
+    assert.equal(patchBody.changed, true);
+
+    // 3. The agent restarts under the new command: a NEW
+    //    registration POST for "sw" with the flipped preset
+    //    arrives promptly (the periodic re-registration is 30s
+    //    apart, so a POST within seconds of the PATCH can only
+    //    come from the restart).
+    const postCount = stub.registrations.filter(
+      (r) => r.method === "POST" && r.agentName === "sw",
+    ).length;
+    assert(
+      await until(
+        () =>
+          stub.registrations.filter(
+            (r) => r.method === "POST" && r.agentName === "sw",
+          ).length > postCount,
+        10_000,
+      ),
+      "preset switch never restarted the agent (no new registration)",
+    );
+    const second = stub.registrations
+      .filter((r) => r.method === "POST" && r.agentName === "sw")
+      .at(-1)!;
+    assert.equal(second.preset, "sleeper");
+    // The folder was NOT unregistered on a switch (Voir must keep
+    // it so the new child's registration swaps the leg in place).
+    assert(
+      !stub.registrations.some(
+        (r) => r.method === "DELETE" && (r.name === "sw" || r.path === workdir),
+      ),
+      "a preset switch must not unregister the folder",
+    );
+
+    // Desired state was rewritten; desired is never rewritten
+    // except by an explicit switch like this one.
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Array<{
+      dir: string;
+      preset: string;
+      name: string;
+    }>;
+    assert.deepEqual(state, [{ dir: workdir, preset: "sleeper", name: "sw" }]);
+
+    // 4. Unknown preset is refused with the catalog's names.
+    const bad = await fetch(`${api}/agents/sw`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preset: "nope" }),
+    });
+    assert.equal(bad.status, 400);
+    const badBody = (await bad.json()) as { available: string[] };
+    assert.deepEqual(badBody.available.sort(), ["mock", "sleeper"]);
+    const stateAfterBad = JSON.parse(await readFile(statePath, "utf8")) as Array<{
+      preset: string;
+    }>;
+    assert.equal(stateAfterBad[0].preset, "sleeper", "a refused switch writes nothing");
+
+    // 5. Idempotent switch: same preset → 200 changed:false, no restart.
+    const swPostsBefore = stub.registrations.filter(
+      (r) => r.method === "POST" && r.agentName === "sw",
+    ).length;
+    const same = await fetch(`${api}/agents/sw`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preset: "sleeper" }),
+    });
+    assert.equal(same.status, 200);
+    assert.equal(((await same.json()) as { changed: boolean }).changed, false);
+    await sleep(1_500);
+    assert.equal(
+      stub.registrations.filter(
+        (r) => r.method === "POST" && r.agentName === "sw",
+      ).length,
+      swPostsBefore,
+      "an idempotent switch must not restart the agent",
+    );
+
+    // 6. The CLI set-command goes through the daemon: switch back
+    //    to the mock preset, and the restarted child is a REAL ACP
+    //    agent again (session/new answers through the bridge).
+    const cli = spawn(process.execPath, [
+      join(ROOT, "bin/voir-supervisor.mjs"),
+      "set",
+      "sw",
+      "--preset",
+      "mock",
+      "--state",
+      statePath,
+      "--config",
+      configPath,
+    ]);
+    let cliDone: { code: number | null; out: string };
+    cliDone = await new Promise((resolve) => {
+      let out = "";
+      cli.stdout!.on("data", (d: Buffer) => (out += d.toString()));
+      cli.stderr!.on("data", (d: Buffer) => (out += d.toString()));
+      cli.on("close", (code) => resolve({ code, out }));
+      setTimeout(() => resolve({ code: -1, out }), 10_000);
+    });
+    assert.equal(cliDone.code, 0, `CLI set failed: ${cliDone.out}`);
+    assert.match(cliDone.out, /mock/);
+
+    // Wait for the re-registration (preset back to mock) ...
+    assert(
+      await until(() =>
+        stub.registrations.some(
+          (r) => r.method === "POST" && r.agentName === "sw" && r.preset === "mock" &&
+            r !== first,
+        ),
+      ),
+      "CLI set never restarted the agent",
+    );
+    // ... and probe the new bridge with a real ACP call. mock-acp
+    // answers session/new; the sleeper child never would (504).
+    const running = stub.registrations
+      .filter((r) => r.method === "POST" && r.agentName === "sw" && r.preset === "mock")
+      .at(-1)!;
+    const sn = await fetch(running.agentUrl!, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/new",
+        params: { cwd: workdir },
+      }),
+    });
+    assert.ok(sn.ok, "mock preset child should answer ACP calls");
+    const snBody = (await sn.json()) as { result?: { sessionId?: string } };
+    assert.ok(snBody.result?.sessionId, "session/new should return a session id");
+
+    // 7. Unknown agent: 404, nothing written.
+    const missing = await fetch(`${api}/agents/nothing`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preset: "mock" }),
+    });
+    assert.equal(missing.status, 404);
+  } finally {
+        await killSoon(sup);
     stub.server.close();
     stub.server.closeAllConnections();
   }

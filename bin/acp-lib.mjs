@@ -296,16 +296,30 @@ export function createRegistrar({
   agentUrl,
   agentName,
   reregisterMs = REREGISTER_INTERVAL_MS,
+  describe = null,
 }) {
   let registered = false;
   let stopping = false;
   let timer = null;
 
   const post = async () => {
+    // Extra registration payload (supervisor awareness: which
+    // preset runs here, the catalog's preset names, loopback API
+    // coordinates). Built per POST, not once at creation — the
+    // caller's state can change mid-run (SIGHUP config reload,
+    // a preset switched in place) and the next re-registration
+    // must carry the truth as it is NOW.
+    const extra =
+      typeof describe === "function" ? describe() : undefined;
     const res = await fetch(`${ui}/api/folders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: folder, agentUrl, agentName }),
+      body: JSON.stringify({
+        path: folder,
+        agentUrl,
+        agentName,
+        ...(extra && typeof extra === "object" ? extra : {}),
+      }),
     });
     if (!res.ok) {
       const text = await res.text();

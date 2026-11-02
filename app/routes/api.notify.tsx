@@ -17,7 +17,10 @@ import { folderUrl, sessionUrl } from "~/lib/urls";
  *   GET  /api/notify/config       → { publicKey } | { disabled: true }
  *   POST /api/notify/subscribe    → 201  body: PushSubscription JSON
  *   POST /api/notify/unsubscribe  → 204  body: { endpoint }
- *   POST /api/notify/test         → 204  body: { url?, text? } (dev aid)
+ *   POST /api/notify/test         → 204  body: { url?, text?, title?, tag?,
+ *                                             folder?, sessionId? }  (dev aid;
+ *                                             also the deferred-push channel for
+ *                                             the alert-bridge quiet-hours lane)
  *
  * Named /api/notify rather than the /api/push/* from the design
  * doc because /api/push is taken by the git-push endpoint.
@@ -79,8 +82,13 @@ export async function action({ request }: Route.ActionArgs) {
     // recipe in docs/two-way.md works without any auth. Deep-links
     // into the chat when folder (and optionally sessionId) is
     // given, mirroring what the inbox's real pushes carry.
+    // title/tag overrides let server-side callers (alert-bridge
+    // deferred pushes) render like real notifications instead of
+    // "test notification".
     const text = typeof body.text === "string" ? body.text : undefined;
     const explicitUrl = typeof body.url === "string" ? body.url : undefined;
+    const title = typeof body.title === "string" ? body.title : undefined;
+    const tag = typeof body.tag === "string" ? body.tag : undefined;
     const folder = typeof body.folder === "string" ? body.folder : undefined;
     const sessionId =
       typeof body.sessionId === "string" ? body.sessionId : undefined;
@@ -89,10 +97,10 @@ export async function action({ request }: Route.ActionArgs) {
     else if (folder && sessionId) url = sessionUrl(folder, sessionId);
     else if (folder) url = folderUrl(folder);
     const res = await sendPush({
-      title: "Voir — test notification",
+      title: title ?? "Voir — test notification",
       body: text ?? "Notifications are working. 🔔",
       url,
-      tag: "voir:test",
+      tag: tag ?? "voir:test",
       folder,
       sessionId,
     });

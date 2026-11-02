@@ -13,7 +13,7 @@ import { sessionUrl } from "~/lib/urls";
  *     "prompt":  "Summarize today's report.", // first user turn
  *     "from":    "cron/backup-check",        // optional origin marker
  *     "title":   "backup check",             // optional session title
- *     "notify":  "on-settle"                 // on-create | on-settle | both
+ *     "notify":  "on-settle"                 // on-create | on-settle | both | none
  *   }
  *   → 201 { sessionId, folder, url }
  *
@@ -31,12 +31,17 @@ import { sessionUrl } from "~/lib/urls";
  * `notify: "on-settle"` (the default) waits for the agent's turn
  * to finish and pushes the reply excerpt — "you have an answer
  * waiting". `on-create` pushes immediately so the user can watch
- * the turn stream live. Pushes are suppressed while a viewer has
- * the session's SSE stream open (listener count >1 = someone is
- * watching besides this watcher).
+ * the turn stream live. `none` never pushes — for machine-seeded
+ * lanes that create conversations for later reading (e.g. the
+ * alert-bridge warning lane, or quiet-hours criticals whose push
+ * is deferred and fired later via /api/notify/test).
+ *
+ * Pushes are suppressed while a viewer has the session's SSE
+ * stream open (listener count >1 = someone is watching besides
+ * this watcher).
  */
 
-const NOTIFY_MODES = ["on-create", "on-settle", "both"] as const;
+const NOTIFY_MODES = ["on-create", "on-settle", "both", "none"] as const;
 type NotifyMode = (typeof NOTIFY_MODES)[number];
 
 const EXCERPT_LEN = 140;

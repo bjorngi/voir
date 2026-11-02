@@ -75,7 +75,7 @@ X-Voir-Token: <VOIR_INBOX_TOKEN>
 {
   "folder": "/home/bjorn/code/infra",
   "prompt": "[from: manual curl] Summarize today's hiet checkup report.",
-  "notify": "on-settle",          // "on-create" | "on-settle" | "both"
+  "notify": "on-settle",          // "on-create" | "on-settle" | "both" | "none"
   "title": "hiet checkup follow-up"   // optional, defaults like UI sessions
 }
 
@@ -227,6 +227,13 @@ app-level, not per-session). Enable → `Notification.requestPermission()`
 - Push when **the agent settles** (mode 1) or **session adopted**
   (mode 3); body = first ~140 chars of the last agent message
   (mode 2: the passthrough text).
+- **`notify: "none"` never pushes** — the conversation is created
+  and the agent turn runs, but the phone stays silent. Used by
+  machine lanes that want the analysis ready for later reading
+  (the alert-bridge warning lane) and by quiet-hours criticals,
+  whose push is deferred by the bridge and fired after quiet hours
+  via `/api/notify/test` (which accepts `title`/`tag` overrides so
+  deferred pushes render like real ones).
 - **Suppress push when a viewer is watching:** if
   `sessionManager` has live SSE listeners for that session, the user
   is already watching — skip the push (the listeners set is the

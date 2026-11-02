@@ -78,6 +78,41 @@ export function ChatView({
   const [currentModeId, setCurrentModeId] = useState<string | null>(
     data.currentModeId ?? null,
   );
+  // The supervisor preset (fence command) the agent hosting this
+  // chat runs under, and the catalog's other preset names. Both
+  // absent for one-shot acp-spawn agents — the drawer omits the
+  // fence picker then. Switching restarts the agent (the
+  // supervisor PATCHes its desired state, stops the child, and
+  // reconciles it back up under the new command); the SSE stream
+  // survives the restart (Voir keeps the folder registered) and
+  // the banner self-heals when the new child re-registers.
+  const [currentPreset, setCurrentPreset] = useState<string | null>(
+    data.preset ?? null,
+  );
+  const [presetPending, setPresetPending] = useState(false);
+  const presetOptions = data.presetOptions ?? [];
+  // Manual cache clear (drawer's bottom row): drops the agent's
+  // cached session list, ads and held transcripts — replayed
+  // from agent truth. The open stream reconnects on the resync
+  // control, so the transcript refreshes itself.
+  const [cacheClearing, setCacheClearing] = useState(false);
+  const clearAgentCache = useCallback(async () => {
+    setCacheClearing(true);
+    try {
+      const res = await fetch("/api/folders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: folder.path,
+          sessionId: initial.id,
+          cache: "clear",
+        }),
+      });
+      if (!res.ok) throw new Error(`cache clear failed: ${res.status}`);
+    } finally {
+      setCacheClearing(false);
+    }
+  }, [folder.path, initial.id]);
   const [commands, setCommands] = useState(data.availableCommands ?? []);
   // Connection health of the SSE stream. `connected` is true once
   // the server has sent `ready` for the current connection;
@@ -86,6 +121,22 @@ export function ChatView({
   // composer renders from these.
   const [connected, setConnected] = useState(false);
   const [connReason, setConnReason] = useState<string | null>(null);
+  // The green "Connected — live" flash: fires when the stream
+  // transitions to connected (initial connect and every heal —
+  // a fence switch, a clear-cache resync, a network recovery),
+  // then unmounts. The transition detection is edge-based so
+  // re-renders don't re-flash a settled stream.
+  const [justConnected, setJustConnected] = useState(false);
+  const prevConnected = useRef(false);
+  useEffect(() => {
+    if (connected === prevConnected.current) return;
+    const wasConnected = prevConnected.current;
+    prevConnected.current = connected;
+    if (!connected || wasConnected) return;
+    setJustConnected(true);
+    const t = setTimeout(() => setJustConnected(false), 1_600);
+    return () => clearTimeout(t);
+  }, [connected]);
   const visible = usePageVisible();
   const scrollRef = useAutoScroll<HTMLDivElement>([messages, visible]);
 
@@ -539,13 +590,24 @@ export function ChatView({
           </div>
         </div>
         {busy && <WorkingBorder />}
-      </div>
-      {!connected && (
+        {/*
+          The connection state: a full-width bar floating over the
+          transcript's top edge — right under the tab bar (Chat /
+          Files / Changes), content centered. Color-coded: blue,
+          pulsing dot = first connect; amber, pulsing dot =
+          dropped and reconnecting (the server's reason when it
+          sent one); green flash = connected / recovered, fades
+          out. Absolutely positioned and pointer-transparent, so
+          the transcript and composer never shift when it appears
+          or leaves, and it can't swallow taps on what's under it.
+        */}
         <ConnectionBanner
-          firstTime={!everConnected.current}
+          connected={connected}
+          everConnected={everConnected.current}
           reason={connReason}
+          justConnected={justConnected}
         />
-      )}
+      </div>
       {voice.active ? (
         /* Voice conversation mode owns the input area: the composer
            is replaced by the voice panel (mic orb, live transcript,
@@ -583,15 +645,20 @@ export function ChatView({
             and out via CSS `grid-template-rows`; the chevron
             itself stays put.
           */}
-          {(availableModels.length > 0 || availableModes.length > 0) && (
+          {(availableModels.length > 0 ||
+            availableModes.length > 0 ||
+            presetOptions.length > 0) && (
             <ModelDrawer
               open={drawerOpen}
               onClose={() => setDrawerOpen(false)}
               onToggle={() => setDrawerOpen((v) => !v)}
               models={availableModels}
               modes={availableModes}
+              presets={presetOptions}
               currentModelId={currentModelId}
               currentModeId={currentModeId}
+              currentPreset={currentPreset}
+              presetPending={presetPending}
               pending={pending.pending}
               onPicked={async (kind, v) => {
                 const action = kind === "model" ? "set_model" : "set_mode";
@@ -600,6 +667,31 @@ export function ChatView({
                 else setCurrentModeId(v);
                 setDrawerOpen(false);
               }}
+              onPickPreset={async (p) => {
+                setPresetPending(true);
+                try {
+                  await fetch("/api/folders", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      path: folder.path,
+                      sessionId: initial.id,
+                      preset: p,
+                    }),
+                  });
+                  setCurrentPreset(p);
+                  setDrawerOpen(false);
+                  // On failure the drawer stays open with the old
+                  // truth; the connection banner (agent leg) and
+                  // the drawer's pending flag are the visible story.
+                } catch {
+                  console.warn("fence switch failed");
+                } finally {
+                  setPresetPending(false);
+                }
+              }}
+              onClearCache={clearAgentCache}
+              cacheClearing={cacheClearing}
             />
           )}
           <Composer
@@ -715,28 +807,76 @@ function findLastIndex(prev: ChatMessage[], pred: (m: ChatMessage) => boolean): 
 }
 
 // -----------------------------------------------------------------------
-// ConnectionBanner — shown while the SSE stream is not connected.
-// The client keeps retrying with backoff (see the effect above), so
-// this is reassurance, not an error the user has to act on. Never
-// blocks the composer: messages sent while disconnected queue on
-// the server as usual, and the transcript catches up on reconnect.
+// ConnectionBanner — full-width bar floating over the transcript's
+// top edge (right under the tab bar), content centered — the chat's
+// live connection state at a glance:
+//
+//   blue, pulsing dot    first connect — normal startup
+//   amber, pulsing dot   dropped — reconnecting (the server's
+//                        reason when it sent one, e.g. "Agent
+//                        offline — retrying…")
+//   green flash          connected / recovered — fades out
+//
+// Position is part of the contract: absolutely positioned inside
+// the transcript wrapper, pointer-events-none — the bar overlays
+// the content (backdrop blur keeps the first lines readable
+// under it), the layout never shifts when it appears or leaves,
+// and taps pass through to the content underneath. The client
+// keeps retrying with backoff (see the effect above), so amber
+// is reassurance, not an error to act on. Messages sent while
+// disconnected queue on the server as usual; the transcript
+// catches up on reconnect.
 // -----------------------------------------------------------------------
 
 function ConnectionBanner({
-  firstTime,
+  connected,
+  everConnected,
   reason,
+  justConnected,
 }: {
-  firstTime: boolean;
+  connected: boolean;
+  everConnected: boolean;
   reason: string | null;
+  justConnected: boolean;
 }) {
+  if (connected) {
+    if (!justConnected) return null;
+    return (
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
+        <div
+          role="status"
+          className="animate-banner-fade flex items-center justify-center gap-2 border-b border-emerald-400/25 bg-emerald-950/75 px-3 py-1 font-mono text-[11px] text-emerald-300 backdrop-blur-sm"
+        >
+          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+          <span>Connected — live</span>
+        </div>
+      </div>
+    );
+  }
+  const firstTime = !everConnected;
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="shrink-0 border-t border-neutral-800 bg-neutral-900/70 px-3 py-1.5 font-mono text-[11px] text-neutral-400"
-    >
-      {reason ??
-        (firstTime ? "Connecting…" : "Connection lost — reconnecting…")}
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
+      <div
+        role="status"
+        aria-live="polite"
+        className={
+          "animate-banner-in flex items-center justify-center gap-2 border-b px-3 py-1 font-mono text-[11px] backdrop-blur-sm " +
+          (firstTime
+            ? "border-sky-400/25 bg-sky-950/75 text-sky-300"
+            : "border-amber-400/25 bg-amber-950/75 text-amber-300")
+        }
+      >
+        <span
+          className={
+            "animate-banner-dot inline-block h-1.5 w-1.5 shrink-0 rounded-full " +
+            (firstTime ? "bg-sky-400" : "bg-amber-400")
+          }
+        />
+        <span>
+          {reason ??
+            (firstTime ? "Connecting…" : "Connection lost — reconnecting…")}
+        </span>
+      </div>
     </div>
   );
 }

@@ -99,7 +99,10 @@ A few things the chat can do, when the agent supports them:
 
 - **Switch model mid-session** — the chevron above the composer
   opens a drawer listing the models the agent has advertised. Pick
-  one and the next turn uses it.
+  one and the next turn uses it. A third select in the same drawer
+  **switches the fence** for supervisor-managed agents (see
+  *Keep a fleet running* below) — pick a preset and the supervisor
+  restarts the agent under its new command, session intact.
 
   <img src="images/choose-model.jpeg" width="360" alt="Changing the active model from the drawer above the composer" />
 
@@ -236,6 +239,16 @@ voir-supervisor add ~/code/infra --preset pi-fenced
 voir-supervisor            # run the daemon (systemd unit in the docs)
 voir-supervisor ls
 ```
+
+The fence itself switches live from the chat: the model/mode
+drawer's **Fence** select lists the catalog's presets — pick one
+and the supervisor restarts the agent under the new command
+(without unregistering, so the open session survives), Voir
+clears its switched caches on the next registration and
+re-syncs from agent truth. A **Clear cache** row at the drawer's
+bottom does the same on demand, and the folder list shows which
+fence each worktree runs (row chip). The CLI equivalent is
+`voir-supervisor set <name|dir> --preset <p>`.
 
 Full configuration and behavior reference:
 [docs/supervisor.md](./docs/supervisor.md).

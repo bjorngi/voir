@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import type { AvailableModel, AvailableMode } from "~/lib/chat-types";
 
 /**
- * Inline panel for switching the session's active model and mode.
+ * Inline panel for switching the session's active model, mode,
+ * and — when the agent runs under voir-supervisor — its preset
+ * (the fence command it was launched with; switching restarts
+ * the agent under the new command, see app/lib/
+ * supervisor-proxy.server.ts).
  *
  * The panel sits in a CSS grid track whose row size animates
  * between `0fr` (closed) and `1fr` (open). This is the only
@@ -33,10 +37,16 @@ export function ModelDrawer({
   onToggle,
   models,
   modes,
+  presets = [],
   currentModelId,
   currentModeId,
+  currentPreset,
+  presetPending,
   pending,
   onPicked,
+  onPickPreset,
+  onClearCache,
+  cacheClearing,
 }: {
   open: boolean;
   /** Called when the user wants to close the drawer (Esc,
@@ -51,15 +61,34 @@ export function ModelDrawer({
   onToggle: () => void;
   models: AvailableModel[];
   modes: AvailableMode[];
+  /** Supervisor presets (fence commands) the agent can be
+   * switched to, as catalog names. Empty for one-shot
+   * acp-spawn agents — the fence picker is omitted then. */
+  presets?: string[];
   currentModelId: string | null;
   currentModeId: string | null;
-  /** While an action is in flight (set_model / set_mode), the
-   * corresponding control is shown in a pending state and
-   * picking a different value is no-op'd. A Set of pending
-   * keys lets the user change model and mode in quick
-   * succession without flicker. */
+  /** The preset this chat's agent currently runs under. */
+  currentPreset: string | null;
+  /** While a preset switch is in flight the fence control is
+   * shown as pending; the switch restarts the agent, so a
+   * double-fire would kill and restart twice. */
+  presetPending: boolean;
+  /** While a model/mode action is in flight (set_model /
+   * set_mode), the corresponding control is shown in a
+   * pending state and picking a different value is no-op'd.
+   * A Set of pending keys lets the user change model and
+   * mode in quick succession without flicker. */
   pending: Set<string>;
   onPicked?: (kind: "model" | "mode", value: string) => void;
+  onPickPreset?: (preset: string) => void;
+  /** Manual maintenance: drop Voir's cached view of this agent
+   * (session list, advertised models/modes, held transcripts —
+   * replayed from agent truth; open streams resnapshot). The
+   * drawer shows a "Clear cache" row at the bottom of the
+   * panel when provided. */
+  onClearCache?: () => Promise<unknown>;
+  /** While the clear request is in flight. */
+  cacheClearing?: boolean;
 }) {
   // Escape closes the drawer
   useEffect(() => {
@@ -71,9 +100,31 @@ export function ModelDrawer({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // "Cleared" feedback: a short flourish after the clear lands,
+  // then the row snaps back to its resting label.
+  const [cleared, setCleared] = useState(false);
+  useEffect(() => {
+    if (!cleared) return;
+    const t = setTimeout(() => setCleared(false), 1_500);
+    return () => clearTimeout(t);
+  }, [cleared]);
+  const clearIt = () => {
+    void (async () => {
+      setCleared(false);
+      try {
+        await onClearCache?.();
+        setCleared(true);
+      } catch {
+        // The row stays on its resting label; the request's
+        // failure is on its own (console). Nothing to lock up.
+      }
+    })();
+  };
+
   const hasModels = models.length > 0;
   const hasModes = modes.length > 0;
-  const empty = !hasModels && !hasModes;
+  const hasPresets = presets.length > 0;
+  const empty = !hasModels && !hasModes && !hasPresets;
 
   return (
     <div>
@@ -96,9 +147,11 @@ export function ModelDrawer({
           onClick={onToggle}
           aria-expanded={open}
           aria-label={
-            open ? "Close model and mode" : "Open model and mode"
+            open ? "Close model, mode and fence" : "Open model, mode and fence"
           }
-          title={open ? "Close model and mode" : "Open model and mode"}
+          title={
+            open ? "Close model, mode and fence" : "Open model, mode and fence"
+          }
           className="inline-flex h-7 w-7 items-center justify-center border-l border-t border-r border-neutral-800 bg-neutral-950 text-base text-neutral-200 active:bg-neutral-800"
         >
           <span aria-hidden="true" className="font-mono leading-none">
@@ -118,8 +171,8 @@ export function ModelDrawer({
           <div className="border border-neutral-800 bg-neutral-950 shadow-2xl">
             {empty ? (
               <div className="px-3 pb-3 text-[12px] text-neutral-500">
-                The agent didn't advertise any models or modes for this
-                session.
+                The agent didn't advertise any models or modes, and there is no
+                supervisor preset (fence command) to switch it to.
               </div>
             ) : (
               <div className="flex gap-2 p-2">
@@ -147,6 +200,34 @@ export function ModelDrawer({
                     onChange={(v) => onPicked?.("mode", v)}
                   />
                 )}
+                {hasPresets && (
+                  <NativeSelect
+                    label="Fence"
+                    value={currentPreset ?? ""}
+                    disabled={presetPending}
+                    options={presets.map((p) => ({
+                      value: p,
+                      label: p === currentPreset ? `${p} (running)` : p,
+                    }))}
+                    onChange={(v) => onPickPreset?.(v)}
+                  />
+                )}
+              </div>
+            )}
+            {onClearCache && (
+              <div className="border-t border-neutral-800">
+                <button
+                  type="button"
+                  onClick={clearIt}
+                  disabled={cacheClearing}
+                  className="block w-full px-3 py-2 text-left font-mono text-[11px] text-neutral-400 active:bg-neutral-800 disabled:opacity-60"
+                >
+                  {cacheClearing
+                    ? "Clearing — re-syncing from agent truth…"
+                    : cleared
+                      ? "Cleared — re-synced from agent truth"
+                      : "Clear cache — re-sync this agent from truth"}
+                </button>
               </div>
             )}
           </div>

@@ -32,13 +32,21 @@ export function FolderTree({
   onPick?: () => void;
 }) {
   // Collapsed by default: the homescreen is a fleet overview —
-  // the folder row (name, agent badge, ±diff pill) is the
+  // the folder row (name, fence chip, ±diff pill) is the
   // summary, and the "Working on" shortlist above already
   // surfaces whatever a session is doing. Expand with the
   // chevron when you want the folder's chats.
   const [open, setOpen] = useState(false);
   const href = folderUrl(folder.path);
   const diffHref = `${href}?view=diff`;
+  // The fence chip: which preset (fence profile) runs here. The
+  // identity name ("pi-7f3763") is plumbing — when the agent is
+  // supervisor-managed the preset is the useful fact, and the
+  // plain agent name carries it only for one-shot spawns.
+  const fenceChip = folder.preset ?? folder.agentName;
+  const fenceTitle = folder.preset
+    ? `Fence: ${folder.preset}`
+    : `Agent: ${folder.agentName}`;
   return (
     <li>
       <div className="flex items-center">
@@ -57,12 +65,12 @@ export function FolderTree({
         >
           <span className="font-mono">{shortPath(folder.path)}</span>
         </a>
-        {folder.agentName && (
+        {fenceChip && (
           <span
-            title={`Agent${folder.agentName.includes(" · ") ? "s" : ""}: ${folder.agentName}`}
+            title={fenceTitle}
             className="mr-2 shrink-0 select-none rounded border border-neutral-800 px-1.5 py-0.5 font-mono text-[11px] text-neutral-400"
           >
-            {folder.agentName}
+            {fenceChip}
           </span>
         )}
         {folder.status === "degraded" && (

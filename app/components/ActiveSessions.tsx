@@ -113,7 +113,14 @@ export function WorkingOnSection({
               <span className="shrink-0 font-mono text-[11px] text-neutral-500">
                 {shortPath(row.folder)}
               </span>
-              <span className="shrink-0 text-[11px] tabular-nums text-neutral-600">
+              {/* timeAgo reads Date.now(), so SSR and hydration can
+                  land one bucket apart ("now" vs "1m") — exactly the
+                  benign case suppressHydrationWarning exists for; the
+                  2s poll re-renders with the client clock immediately. */}
+              <span
+                suppressHydrationWarning
+                className="shrink-0 text-[11px] tabular-nums text-neutral-600"
+              >
                 {timeAgo(row.lastActivityAt)}
               </span>
             </a>

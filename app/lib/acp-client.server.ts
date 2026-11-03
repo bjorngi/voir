@@ -27,6 +27,8 @@
  * until the launcher's periodic re-registration brings it back).
  */
 
+import * as http from "node:http";
+import * as https from "node:https";
 import type {
   AvailableModel,
   AvailableMode,
@@ -137,6 +139,90 @@ export interface AcpTransport {
 }
 
 // -----------------------------------------------------------------------
+// POST plumbing: node:http, not fetch
+// -----------------------------------------------------------------------
+
+/**
+ * Per-request timeout policy for the JSON-RPC leg.
+ *
+ * ACP requests run for as long as the work does: `session/prompt`
+ * resolves only when the whole turn settles — easily minutes — and
+ * `session/load` can replay a large history. Those two must never
+ * time out on the client leg; liveness is the bridge's job (it
+ * answers held requests with HTTP 502 the moment the agent child
+ * dies). Everything else is a quick RPC (initialize, session/new,
+ * session/set_mode, session/list) with a 30s budget so a wedged
+ * agent fails fast instead of holding a page load forever.
+ *
+ * Why not `fetch()`: undici (Node's fetch) enforces a ~300s
+ * headers timeout — a silent ceiling that would break turns longer
+ * than five minutes even when the bridge holds the response
+ * faithfully. Plain node:http has no implicit ceiling, and the
+ * socket timeout below gives explicit, method-aware control.
+ * ACP_REQUEST_TIMEOUT_MS overrides the budget for tests;
+ * `session/prompt` and `session/load` are exempt either way.
+ */
+const NEVER_TIMING_OUT_METHODS = new Set(["session/prompt", "session/load"]);
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+function requestTimeoutMs(method?: string): number {
+  if (method && NEVER_TIMING_OUT_METHODS.has(method)) return 0;
+  const override = Number(process.env.ACP_REQUEST_TIMEOUT_MS);
+  if (Number.isFinite(override) && override > 0) return override;
+  return DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
+interface HttpResult {
+  status: number;
+  statusText: string;
+  ok: boolean;
+  text: string;
+}
+
+/** POST a JSON body; timeoutMs of 0 means "wait indefinitely". */
+function postJson(
+  url: string,
+  body: string,
+  timeoutMs: number,
+): Promise<HttpResult> {
+  const target = new URL(url);
+  const mod = target.protocol === "https:" ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = mod.request(
+      target,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          req.setTimeout(0); // response complete; stop the guard
+          const status = res.statusCode ?? 0;
+          resolve({
+            status,
+            statusText: res.statusMessage ?? "",
+            ok: status >= 200 && status < 300,
+            text: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    if (timeoutMs > 0) {
+      req.setTimeout(timeoutMs, () =>
+        req.destroy(new Error(`ACP request timed out after ${timeoutMs}ms`)),
+      );
+    }
+    req.end(body);
+  });
+}
+
+// -----------------------------------------------------------------------
 // HTTP transport
 // -----------------------------------------------------------------------
 
@@ -163,20 +249,19 @@ export class HttpJsonRpcTransport implements AcpTransport {
 
   async send(msg: JsonRpcMessage): Promise<JsonRpcMessage | undefined> {
     if (this.closed) throw new Error("transport closed");
-    const res = await fetch(this.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(msg),
-    });
+    const res = await postJson(
+      this.url,
+      JSON.stringify(msg),
+      requestTimeoutMs(msg.method),
+    );
     if (res.status === 204) return undefined; // notification ack
     if (!res.ok) {
       throw new Error(
         `ACP HTTP ${this.url} returned ${res.status} ${res.statusText}`,
       );
     }
-    const text = await res.text();
-    if (!text) return undefined;
-    return JSON.parse(text) as JsonRpcMessage;
+    if (!res.text) return undefined;
+    return JSON.parse(res.text) as JsonRpcMessage;
   }
 
   onMessage(cb: (msg: JsonRpcMessage) => void): () => void {

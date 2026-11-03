@@ -12,7 +12,10 @@
 //
 // The bridge shape (see docs/sandbox.md):
 //   POST <url>  one JSON-RPC message per request body
-//               200 + JSON-RPC response (requests)
+//               200 + JSON-RPC response (requests, held open for
+//                   as long as the agent works — a session/prompt
+//                   turn runs minutes — and settled 502 immediately
+//                   if the agent child dies meanwhile)
 //               204 (notifications)
 //               204/503 for the local `ping` health probe
 //   GET  <url>  text/event-stream, one JSON-RPC message per
@@ -118,6 +121,10 @@ export async function launchAgent({
     env: { ...process.env, ACP_FOLDER: folder, ...env },
   });
   child.stderr.on("data", (b) => process.stderr.write(`[${tag}] ${b}`));
+  // A write to an already-dead child must not crash the bridge
+  // with an unhandled EPIPE: the exit handler below settles any
+  // pending requests, and the failed write simply lands nowhere.
+  child.stdin.on("error", () => {});
   child.on("error", (err) => {
     if (stopped) return;
     process.stderr.write(
@@ -126,6 +133,9 @@ export async function launchAgent({
     );
   });
   child.on("exit", (code, signal) => {
+    // Dead agents owe no more responses: settle whatever the
+    // bridge is still holding so clients fail fast and honestly.
+    failPending(`agent exited (code ${code ?? "?"}) with requests pending`);
     if (stopped) return; // our own stop(); no event
     onChildExit?.(code, signal);
   });
@@ -133,6 +143,37 @@ export async function launchAgent({
   // JSON-RPC framing on stdout → request responses + SSE push
   const pending = new Map();
   const sseClients = new Set();
+
+  // Sentinels for held requests resolved outside the stdout path:
+  // the awaiting POST handler must not write to a response that
+  // has already been served (502) or abandoned (client left).
+  const SETTLED_ELSEWHERE = Symbol("settled-elsewhere");
+  const CLIENT_GONE = Symbol("client-gone");
+
+  // Settle every pending request at once — the agent child died
+  // (or the bridge is stopping) and can never answer them. Each
+  // POST gets an honest 502 instead of hanging. This is the
+  // liveness story for long-held ACP requests: there is no timeout
+  // race on the request path (a session/prompt turn runs minutes),
+  // but a dead agent settles everything it owes immediately.
+  const failPending = (message) => {
+    const entries = Array.from(pending.values());
+    pending.clear();
+    for (const { resolve, res } of entries) {
+      try {
+        res.statusCode = 502;
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32000, message },
+          }),
+        );
+      } catch {}
+      resolve(SETTLED_ELSEWHERE);
+    }
+  };
   let stdoutBuf = "";
   child.stdout.on("data", (chunk) => {
     stdoutBuf += chunk.toString();
@@ -186,19 +227,28 @@ export async function launchAgent({
         }
         if (body.id !== undefined) {
           const id = body.id;
-          const p = new Promise((resolve) =>
-            pending.set(id, { resolve, ts: Date.now() }),
-          );
-          child.stdin.write(JSON.stringify(body) + "\n");
-          const reply = await Promise.race([
-            p,
-            new Promise((r) => setTimeout(() => r(null), 30_000)),
-          ]);
-          if (!reply) {
-            res.statusCode = 504;
-            res.end();
-            return;
-          }
+          // Hold the response open until the agent replies. An ACP
+          // request runs for as long as the work does — a
+          // `session/prompt` turn easily takes minutes, `session/load`
+          // can replay a large history — so there is no timeout race
+          // here. Liveness is child-driven instead: when the agent
+          // exits (or the bridge stops) every held request is settled
+          // 502 immediately (failPending above). A client that gives
+          // up early just drops out of `pending`; a late agent reply
+          // for it is discarded by the framing loop.
+          const reply = await new Promise((resolve) => {
+            pending.set(id, { resolve, res });
+            res.on("close", () => {
+              const e = pending.get(id);
+              if (e && e.res === res) {
+                pending.delete(id);
+                resolve(CLIENT_GONE);
+              }
+            });
+            child.stdin.write(JSON.stringify(body) + "\n");
+          });
+          pending.delete(id);
+          if (reply === SETTLED_ELSEWHERE || reply === CLIENT_GONE) return;
           res.setHeader("Content-Type", "application/json");
           res.end(JSON.stringify(reply));
         } else {
@@ -258,6 +308,7 @@ export async function launchAgent({
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    failPending("bridge stopped with requests pending");
     server.close();
     server.closeAllConnections?.();
     child.kill("SIGTERM");

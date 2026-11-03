@@ -23,12 +23,16 @@ Two problems; the old design only saw the first.
    times a day, the list grows and never shrinks), and every
    session shows up in every list because `session/list` (see
    `AcpClient.listSessions` in `app/lib/acp-client.server.ts`)
-   carries no flag and offers no mutation RPC —
+   carries no flag and offers no complete mutation surface —
    `SessionListEntry` is `{sessionId, title?, updatedAt?,
-   cwd?}` and that's the whole truth. No `session/delete`, no
-   `session/rename`, no `session/set_meta`. So any status must
-   live **in voir**, as an overlay on agent truth — the same
-   call the protocol forces on every ACP client.
+   cwd?}`, titles can arrive live via the (now stable)
+   `session_info_update` notification (voir handles those), and
+   `session/delete` exists as a stable, capability-gated method
+   ACP agents may support — but no agent voir runs today
+   (pi-acp) advertises `delete`, and there is no rename RPC at
+   all. So most status must still live **in voir**, as an
+   overlay on agent truth — the same call the protocol forces
+   on every ACP client.
 
 2. Voir knows more than the lists show. `SessionState.busy`
    (a turn in flight), `SessionState.queueDepth` (mirrored from

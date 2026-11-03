@@ -566,6 +566,12 @@ class SessionManager {
     ]);
     session.replaying = false;
     session.replayDoneResolver = undefined;
+    // The replay replaced the transcript from agent truth: busy
+    // claimed by earlier inference is stale evidence — drop it on
+    // the same principle resync applies. If the agent genuinely is
+    // still mid-turn, live chunks arriving after the boundary
+    // re-claim it.
+    this.clearInferredBusy(session);
     return session;
   }
 
@@ -936,6 +942,7 @@ class SessionManager {
       session.inFlightPrompts = Math.max(0, (session.inFlightPrompts ?? 1) - 1);
       if (session.inFlightPrompts === 0) {
         session.busy = false;
+        session.inferredBusy = false;
         session.queueDepth = 0;
         this.broadcast(session, {
           id: cryptoRandom(),
@@ -1214,6 +1221,17 @@ class SessionManager {
         if (typeof qDepth === "number") {
           this.handleQueueUpdate(folder, sessionId, qDepth);
         }
+        // `_meta.piAcp.running: false` = the agent's loop is idle
+        // (agent_end settled, queue drained). If busy came only
+        // from transcript inference, release it here — for pi-acp
+        // this is the authoritative turn-end signal even when no
+        // Voir prompt owns the turn.
+        const piMeta = (
+          u as { _meta?: { piAcp?: { running?: boolean } } }
+        )._meta?.piAcp;
+        if (piMeta?.running === false) {
+          this.clearInferredBusy(session);
+        }
         return;
       }
     }
@@ -1224,6 +1242,7 @@ class SessionManager {
       update.content &&
       !Array.isArray(update.content)
     ) {
+      this.maybeClaimInferredBusy(session);
       const text = update.content.type === "text" ? update.content.text ?? "" : "";
       this.appendToStream(session, id, "agent", "text", text);
       return;
@@ -1235,6 +1254,7 @@ class SessionManager {
       update.content &&
       !Array.isArray(update.content)
     ) {
+      this.maybeClaimInferredBusy(session);
       const text = update.content.type === "text" ? update.content.text ?? "" : "";
       this.appendToStream(session, id, "agent", "thought", text);
       return;
@@ -1246,6 +1266,7 @@ class SessionManager {
       update.content &&
       !Array.isArray(update.content)
     ) {
+      this.maybeClaimInferredBusy(session);
       const text = update.content.type === "text" ? update.content.text ?? "" : "";
       if (!text) return;
       session.messages.push({
@@ -1261,6 +1282,7 @@ class SessionManager {
 
     // tool_call
     if (update.sessionUpdate === "tool_call") {
+      this.maybeClaimInferredBusy(session);
       const msg: ChatMessage = {
         id,
         role: "agent",
@@ -1286,6 +1308,7 @@ class SessionManager {
 
     // tool_call_update
     if (update.sessionUpdate === "tool_call_update") {
+      this.maybeClaimInferredBusy(session);
       const toolCallId = update.toolCallId ?? id;
       const rawInput = (update as { rawInput?: unknown }).rawInput;
       for (let i = session.messages.length - 1; i >= 0; i--) {
@@ -1307,6 +1330,7 @@ class SessionManager {
 
     // plan (replaces wholesale on each update, per ACP spec)
     if (update.sessionUpdate === "plan") {
+      this.maybeClaimInferredBusy(session);
       const msg: ChatMessage = {
         id,
         role: "agent",
@@ -1396,6 +1420,72 @@ class SessionManager {
         }),
       );
     }
+  }
+
+  /**
+   * Transcript-evidence busy inference — the client leg of the
+   * long-turn fix.
+   *
+   * ACP v1 has no client-visible "is a turn running?" signal: the
+   * client learns a turn ended only from its own session/prompt
+   * response (or from an agent-extension meta like pi-acp's
+   * `running: false`). But the inverse is provable from the wire:
+   * any *live* (non-replay) agent activity arriving while Voir
+   * holds no in-flight prompt means the agent IS mid-turn — which
+   * happens exactly when Voir restarted (or the prompt RPC failed)
+   * while the agent kept working. Claim busy so the loading bar,
+   * the Stop button and the Working-on row reflect reality.
+   */
+  private maybeClaimInferredBusy(session: SessionState) {
+    if (session.busy || session.replaying) return;
+    // A turn requires a user turn to exist. Out-of-turn
+    // informational chunks — pi-acp's startup banner, pushed as
+    // a live agent_message_chunk right after session/new — arrive
+    // on sessions that have never been prompted: not evidence of
+    // a running turn, and claiming it would stick the fresh chat
+    // in busy forever (no `running: false` ever follows an
+    // informational chunk). Every genuine recovery passes this
+    // gate — Voir restart mid-turn, prompt-leg failure — because
+    // the replayed transcript contains the user message that
+    // started the interrupted turn.
+    const hasUserTurn = session.messages.some(
+      (m) => m.role === "user" && m.kind === "text",
+    );
+    if (!hasUserTurn) return;
+    session.busy = true;
+    session.inferredBusy = true;
+    this.broadcast(session, {
+      id: cryptoRandom(),
+      role: "system",
+      kind: "busy",
+      busy: true,
+      at: Date.now(),
+    });
+  }
+
+  /**
+   * Release a busy claim that inference set. Never touches busy
+   * owned by a real runPrompt — that owner clears it in its own
+   * finally, and a `running: false` can precede the prompt RPC
+   * response by a hair.
+   */
+  private clearInferredBusy(session: SessionState) {
+    if (!session.inferredBusy) return;
+    session.inferredBusy = false;
+    if (!session.busy || (session.inFlightPrompts ?? 0) > 0) return;
+    session.busy = false;
+    session.queueDepth = 0;
+    this.broadcast(session, {
+      id: cryptoRandom(),
+      role: "system",
+      kind: "busy",
+      busy: false,
+      at: Date.now(),
+    });
+    this.broadcast(
+      session,
+      this.controlMessage({ type: "queueDepth", depth: 0 }),
+    );
   }
 
   private handleInfoUpdate(
@@ -1535,6 +1625,11 @@ class SessionManager {
               `[resync] replay ${session.id.slice(0, 8)} (known=${known?.has(session.id)}) msgs-before=${session.messages.length}`,
             );
           await this.loadSession(state.path, session.id, identityOf(state));
+          // Replay replaced the transcript from agent truth: busy
+          // claimed by pre-outage inference is stale evidence. If
+          // the agent really is still mid-turn, live chunks start
+          // arriving after the replay boundary and re-claim it.
+          this.clearInferredBusy(session);
           if (process.env.DEBUG)
             console.log(
               `[resync] replay done msgs-after=${session.messages.length} replaying=${session.replaying}`,
@@ -1634,6 +1729,18 @@ export interface SessionState {
    * metadata), not from this counter.
    */
   inFlightPrompts?: number;
+  /**
+   * True when `busy` was claimed from transcript evidence rather
+   * than owned by a runPrompt call: live (non-replay) agent
+   * activity arrived while no prompt RPC was in flight, which
+   * proves the agent is mid-turn — the Voir-restart / prompt-leg-
+   * failure cases where no runPrompt exists to own `busy`. Never
+   * cleared directly: released on the agent's own idle signal
+   * (pi-acp publishes `_meta.piAcp.running: false` on agent_end)
+   * or by the next real turn cycle; every path that broadcasts
+   * busy:false resets it.
+   */
+  inferredBusy?: boolean;
   /**
    * True while session/load is replaying history into the in-memory
    * transcript. Replayed chunks should not be marked as streaming

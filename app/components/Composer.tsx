@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFetcher } from "react-router";
-import type { SlashCommand } from "~/lib/chat-types";
+import type { SlashCommand, ImageRef } from "~/lib/chat-types";
 import { appendFinal } from "~/lib/dictation";
 import { fuzzyFiles } from "~/lib/fuzzy";
+import { prepareImage, uploadImage } from "~/lib/image-attach";
 import { useSpeechRecognition } from "~/lib/use-speech-recognition";
 import { sessionUrl } from "~/lib/urls";
 
@@ -86,14 +87,31 @@ function mimeFor(path: string): string | undefined {
   return MIME[path.slice(i + 1).toLowerCase()];
 }
 
-/** Unsent drafts (text + mentions), kept per folder+session in
+/** One attached image chip. `id` exists once the upload
+ *  completed (send waits for those); `previewUrl` is a local
+ *  object URL while picking and the store URL afterwards
+ *  (restored drafts, share seeds) — blob: URLs are revoked on
+ *  remove/send. */
+interface ImageAttach {
+  key: string;
+  id?: string;
+  name: string;
+  mimeType?: string;
+  previewUrl: string;
+  uploading: boolean;
+  error?: string;
+}
+
+/** Unsent drafts (text + mentions + uploaded images), kept per folder+session in
  * sessionStorage so they survive the tab bar's full-page
  * navigations (Chat ↔ Files are plain <a> links, not client-side
  * routing — module state would be wiped on every hop). Cleared
- * on send; cleared when the browser tab closes. */
+ * on send; cleared when the browser tab closes. Only uploaded
+ * images persist — an in-flight or failed upload doesn't. */
 interface Draft {
   text: string;
   mentions: Mention[];
+  images: Array<{ id: string; name: string; mimeType?: string }>;
 }
 const DRAFT_PREFIX = "voir:draft:";
 function loadDraft(key: string): Draft | undefined {
@@ -122,6 +140,9 @@ export function Composer({
   commands: initialCommands = [],
   injectText,
   initialAttach,
+  imageSupported = false,
+  initialShared,
+  currentModelVision,
 }: {
   folder: string;
   sessionId: string;
@@ -159,6 +180,36 @@ export function Composer({
    * back-forward don't re-attach.
    */
   initialAttach?: string;
+  /**
+   * Whether the agent accepts image content blocks (ACP
+   * promptCapabilities.image). Gates the paperclip, paste and
+   * drop affordances — agents that never advertised images
+   * never offer them.
+   */
+  imageSupported?: boolean;
+  /**
+   * Share-target hand-off (see share.server.ts): the staged
+   * manifest the loader resolved from `?shared=<id>`. Seeded
+   * once on mount (text + image chips), then the param is
+   * stripped from the URL like `?attach=`. Images seed only
+   * when the agent supports them — the ShareSheet already
+   * warned "text only" for those folders.
+   */
+  initialShared?: {
+    title?: string;
+    text?: string;
+    images: ImageRef[];
+  };
+  /**
+   * Whether the session's CURRENT model accepts image content
+   * blocks (tri-state via modelVision — undefined when the
+   * agent didn't advertise input modalities). `false` renders
+   * a warning above the attach chips: pi shows text-only
+   * models an omitted-placeholder, so the model answers
+   * "image omitted". Sending stays allowed — the thumbnail
+   * still matters to the human and models can be switched.
+   */
+  currentModelVision?: boolean;
 }) {
   const fetcher = useFetcher<{ error?: string; ok?: boolean }>();
   // Draft key: per folder+session, so switching conversations keeps
@@ -168,13 +219,40 @@ export function Composer({
   const [mentions, setMentions] = useState<Mention[]>(
     () => loadDraft(draftKey)?.mentions ?? [],
   );
-  // Persist the unsent draft (text + mentions) on every change so
+  // Attached images: thumbnails render immediately from local
+  // object URLs; each upload runs in the background and the
+  // chip's `id` appears when it lands. Send waits for uploads
+  // (never sends half a set) and includes only uploaded ones.
+  const [images, setImages] = useState<ImageAttach[]>(() =>
+    (loadDraft(draftKey)?.images ?? []).map((img) => ({
+      key: "draft-" + img.id,
+      id: img.id,
+      name: img.name,
+      mimeType: img.mimeType,
+      previewUrl: `/api/uploads/${img.id}`,
+      uploading: false,
+    })),
+  );
+  const uploadedImages = useMemo(
+    () => images.filter((i): i is ImageAttach & { id: string } => !!i.id),
+    [images],
+  );
+  // Persist the unsent draft (text + mentions + uploaded images)
+  // on every change so
   // navigating away — e.g. to the Files tab to browse/attach —
   // and back restores what the user was writing. Cleared on send
   // (the save below then stores the emptied state).
   useEffect(() => {
-    saveDraft(draftKey, { text, mentions });
-  }, [draftKey, text, mentions]);
+    saveDraft(draftKey, {
+      text,
+      mentions,
+      images: uploadedImages.map((i) => ({
+        id: i.id,
+        name: i.name,
+        mimeType: i.mimeType,
+      })),
+    });
+  }, [draftKey, text, mentions, uploadedImages]);
   // Externally-injected draft: apply on new seq, land focus so
   // the keyboard is ready to fix the transcript.
   const injectedSeq = useRef(0);
@@ -208,6 +286,49 @@ export function Composer({
     } catch {}
     requestAnimationFrame(() => ref.current?.focus());
   }, [initialAttach]);
+  // Share-target hand-off: seed the staged text + image chips
+  // once on mount (the loader resolved the manifest from
+  // ?shared=<id>), then strip the param so reloads don't
+  // re-seed. Images seed only when the agent supports them —
+  // the ShareSheet already warned "text only" for those
+  // folders, and a failed send is worse than a missing chip.
+  const sharedOnce = useRef(false);
+  useEffect(() => {
+    if (!initialShared || sharedOnce.current) return;
+    sharedOnce.current = true;
+    const { title, text: sharedText, images: sharedImages } = initialShared;
+    // Android splits title/text; often the text already carries
+    // the title — only prefix when it doesn't.
+    const composed =
+      title && sharedText && !sharedText.includes(title)
+        ? `${title}\n\n${sharedText}`
+        : sharedText ?? title;
+    if (composed) {
+      setText((t) => (t.trim() ? `${t.replace(/\s+$/, "")}\n${composed}` : composed));
+    }
+    if (imageSupported && sharedImages.length > 0) {
+      setImages((arr) => {
+        const add = sharedImages
+          .filter((img) => !arr.some((a) => a.id === img.id))
+          .map((img) => ({
+            key: "shared-" + img.id,
+            id: img.id,
+            name: img.name ?? "image",
+            mimeType: img.mimeType,
+            previewUrl: `/api/uploads/${img.id}`,
+            uploading: false,
+          }));
+        return [...arr, ...add];
+      });
+    }
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("shared")) {
+        url.searchParams.delete("shared");
+        history.replaceState(history.state, "", url);
+      }
+    } catch {}
+  }, [initialShared, imageSupported]);
   // Seed the slash-command list from the loader snapshot; the
   // chat will push live updates via the EventSource. We don't
   // need to fetch this ourselves — the loader has it.
@@ -496,9 +617,79 @@ export function Composer({
     requestAnimationFrame(() => ref.current?.focus());
   }
 
+  // ── Image attach ─────────────────────────────────────────────
+  // Paperclip, paste, drop and the share hand-off all funnel
+  // through `attachImages`: each file gets an instant local
+  // thumbnail (object URL), is shrunk client-side
+  // (image-attach.ts), uploaded to the store, and the chip's
+  // upload id lands when it's done. A failed upload keeps the
+  // chip with an error state (✕ to drop it) so the user sees
+  // what didn't make it instead of a silent loss.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const MAX_IMAGES = 8;
+
+  async function attachImages(files: Array<File>) {
+    const picks = files
+      .filter(
+        (f) => f.type.startsWith("image/") && f.type !== "image/svg+xml",
+      )
+      .slice(0, MAX_IMAGES - images.length);
+    for (const f of picks) {
+      void uploadOne(f);
+    }
+  }
+
+  async function uploadOne(raw: File) {
+    const key = `pick-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const previewUrl = URL.createObjectURL(raw);
+    setImages((arr) => [
+      ...arr,
+      {
+        key,
+        name: raw.name || "image",
+        mimeType: raw.type,
+        previewUrl,
+        uploading: true,
+      },
+    ]);
+    try {
+      const prepared = await prepareImage(raw);
+      const meta = await uploadImage(prepared);
+      setImages((arr) =>
+        arr.map((i) =>
+          i.key === key
+            ? { ...i, id: meta.id, name: meta.name, mimeType: meta.mimeType, uploading: false }
+            : i,
+        ),
+      );
+    } catch (err) {
+      setImages((arr) =>
+        arr.map((i) =>
+          i.key === key
+            ? { ...i, uploading: false, error: (err as Error).message }
+            : i,
+        ),
+      );
+    }
+  }
+
+  function removeImage(key: string) {
+    setImages((arr) => {
+      const victim = arr.find((i) => i.key === key);
+      if (victim?.previewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(victim.previewUrl);
+      }
+      return arr.filter((i) => i.key !== key);
+    });
+  }
+
   function send() {
     if (dictating) stopDictation();
-    if (!text.trim() && mentions.length === 0) return;
+    // In-flight uploads: never send half a set — the button is
+    // dimmed while any upload runs, but guard the keyboard path
+    // (⌘+Enter) too.
+    if (images.some((i) => i.uploading)) return;
+    if (!text.trim() && mentions.length === 0 && uploadedImages.length === 0) return;
     // The server accepts new messages while a turn is running;
     // pi-acp will queue them for delivery between turns and
     // broadcast a `queueDepth` update so the UI can show a
@@ -506,9 +697,19 @@ export function Composer({
     // `busy` — the only state where the server would reject
     // is if the session doesn't exist, which we can't get
     // into from the chat UI.
-    const payload = { text: text.trim(), resources: mentions };
+    const payload = {
+      text: text.trim(),
+      resources: mentions,
+      images: uploadedImages.map((i) => ({ id: i.id, name: i.name })),
+    };
     setText("");
     setMentions([]);
+    setImages((arr) => {
+      for (const i of arr) {
+        if (i.previewUrl.startsWith("blob:")) URL.revokeObjectURL(i.previewUrl);
+      }
+      return [];
+    });
     onSent?.();
     fetcher.submit(
       { intent: "send", payload: JSON.stringify(payload) },
@@ -534,9 +735,73 @@ export function Composer({
   const showAnyMenu = showSlashMenu || showFileMenu;
 
   return (
-    <div className="relative shrink-0 border-t border-neutral-800 bg-neutral-950/80 px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 backdrop-blur">
-      {mentions.length > 0 && (
+    <div
+      className="relative shrink-0 border-t border-neutral-800 bg-neutral-950/80 px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 backdrop-blur"
+      onDragOver={(e) => {
+        if (imageSupported && e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+        }
+      }}
+      onDrop={(e) => {
+        if (!imageSupported) return;
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length === 0) return;
+        e.preventDefault();
+        void attachImages(files);
+      }}
+    >
+      {(images.length > 0 || mentions.length > 0) && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5 px-2">
+          {currentModelVision === false && images.length > 0 && (
+            <div
+              role="note"
+              className="w-full px-2 font-mono text-[11px] text-amber-300"
+              data-testid="vision-warning"
+            >
+              ⚠ this model can't see images — switch in the ▴ drawer
+              (marked · vision)
+            </div>
+          )}
+          {images.map((img) => (
+            <span
+              key={img.key}
+              className={
+                "relative inline-block h-16 w-16 overflow-hidden bg-neutral-800 " +
+                (img.error ? "border border-rose-400/60" : "border border-neutral-700")
+              }
+              data-testid="image-chip"
+            >
+              <img
+                src={img.previewUrl}
+                alt={img.name}
+                className="h-full w-full object-cover"
+              />
+              {img.uploading && (
+                <span
+                  aria-hidden
+                  className="absolute inset-0 flex animate-pulse items-center justify-center bg-neutral-950/60 font-mono text-[10px] text-neutral-200"
+                >
+                  …
+                </span>
+              )}
+              {img.error && (
+                <span
+                  title={img.error}
+                  className="absolute inset-0 flex items-center justify-center bg-rose-950/70 font-mono text-[10px] text-rose-300"
+                >
+                  failed
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => removeImage(img.key)}
+                className="absolute right-0 top-0 bg-neutral-950/70 px-1.5 text-neutral-200 active:bg-rose-500/40"
+                aria-label={`Remove ${img.name}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
           {mentions.map((m) => (
             <span
               key={m.key}
@@ -703,6 +968,15 @@ export function Composer({
           ref={ref}
           value={text}
           onChange={onChange}
+          onPaste={(e) => {
+            // Pasted screenshots (desktop) — files arrive via
+            // clipboardData, not the input's value.
+            if (!imageSupported) return;
+            const files = Array.from(e.clipboardData.files);
+            if (files.length === 0) return;
+            e.preventDefault();
+            void attachImages(files);
+          }}
           onKeyDown={(e) => {
             if (showAnyMenu) {
               if (e.key === "ArrowDown") {
@@ -764,6 +1038,51 @@ export function Composer({
           }
         />
         <div className="flex shrink-0 items-stretch gap-2 sm:contents">
+          {/* Image attach: paperclip opens the picker (camera or
+              gallery on mobile). Gated on the agent's
+              promptCapabilities.image — hidden entirely for
+              agents that can't take images. The hidden input
+              must stay outside the sm:contents row to avoid
+              participating in the desktop layout. */}
+          {imageSupported && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  if (files.length > 0) void attachImages(files);
+                  // Allow picking the same file twice in a row.
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Attach images"
+                title="Attach images (or paste/drop them)"
+                className="h-11 w-11 shrink-0 border border-neutral-700 bg-transparent text-neutral-400 transition-colors active:bg-white/10 sm:flex-none"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="mx-auto"
+                  aria-hidden="true"
+                >
+                  <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+              </button>
+            </>
+          )}
           {busy && (
             <button
               type="button"
@@ -802,10 +1121,10 @@ export function Composer({
                 ? "border-amber-400/70 bg-transparent text-amber-300 animate-pulse"
                 : busy
                   ? "border-amber-400/70 bg-transparent text-amber-300"
-                  : text.trim() || mentions.length > 0
+                  : text.trim() || mentions.length > 0 || uploadedImages.length > 0
                     ? "border-white bg-transparent text-white"
                     : "border-neutral-700 bg-transparent text-neutral-600 active:bg-transparent")
-            }
+          }
           >
             {dictating ? (committed ? "Inserted ✓" : "Listening…") : busy ? "Queue" : "Send"}
           </button>

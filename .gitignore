@@ -13,3 +13,6 @@ build
 dev-data/push-subscriptions.json
 # Session status store (the "Working on" shortlist)
 dev-data/session-status.json
+# Image uploads + share-target staging (docs/images-and-share.md)
+dev-data/uploads/
+dev-data/shares.json

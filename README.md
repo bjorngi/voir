@@ -96,7 +96,6 @@ A few things the chat can do, when the agent supports them:
   popover.
 
   <img src="images/slash-commands.jpeg" width="360" alt="The slash-command popover with an example" />
-
 - **Switch model mid-session** — the chevron above the composer
   opens a drawer listing the models the agent has advertised. Pick
   one and the next turn uses it. A third select in the same drawer
@@ -110,6 +109,17 @@ A few things the chat can do, when the agent supports them:
   worktree to your next message.
 
   <img src="images/at-files.jpeg" width="360" alt="@-mentioning a file from the worktree" />
+
+- **Image attach** — the paperclip (camera or gallery on the
+  phone, paste/drop on the desktop) attaches images when the
+  agent advertises `promptCapabilities.image`; the browser
+  shrinks phone photos before upload and the prompt carries
+  ACP image content blocks. Thumbnails live in voir's upload
+  store and re-attach from `[Image: <id>]` wire markers on
+  replay — they survive voir restarts and agent resyncs. The
+  model drawer marks vision-capable models (`· vision`) and
+  warns when attaching under a text-only model.
+  Design: [docs/images-and-share.md](./docs/images-and-share.md).
 
 Want it on `PATH`?
 
@@ -261,15 +271,27 @@ page) and a generated icon set (`bin/gen-icons.py`).
 
 - **Android/Chrome:** open the site → menu → *Install app* / *Add
   to Home screen*. You get a standalone window, its own icon and an
-  offline page when the server is unreachable.
+  offline page when the server is unreachable. As an installed PWA
+  it also registers as a **share target**: share a screenshot or
+  text from any app → Voir stages it and offers the pick of your
+  chats ("Send to…" sheet — Working-on rows, recent sessions, or a
+  fresh chat) — the composer seeds with what you shared. Requires
+  the same secure-context HTTPS as the other PWA extras.
 - **iOS/Safari:** Share → *Add to Home Screen*. The app runs
-  standalone with a translucent status bar.
+  standalone with a translucent status bar. (iOS doesn't implement
+  share targets — the paperclip covers iOS.)
 
 The service worker deliberately does no app-shell caching — the
 transcript always comes live from the server and the page's own
-reconnect logic (above) handles transport hiccups. When
-AI-initiated chats + Web Push notifications arrive, the `push`
-and `notificationclick` handlers land in `public/sw.js`.
+reconnect logic (above) handles transport hiccups. Web Push handlers
+live in `public/sw.js` — `push`, `notificationclick` (with an
+inline-reply action on supporting browsers) and
+`pushsubscriptionchange`. The share-target handler lives there too
+(`POST /share` → staged server-side → redirect to the Send-to sheet —
+see [docs/images-and-share.md](./docs/images-and-share.md)).
+Machine-initiated conversations arrive via
+`POST /api/inbox` — the design and its production use are in
+[docs/two-way.md](./docs/two-way.md).
 
 ## Voice
 

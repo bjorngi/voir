@@ -11,6 +11,12 @@ import { listFiles } from "~/lib/files.server";
 import { list as listTimeline } from "~/lib/timeline.server";
 import { sessionUrl } from "~/lib/urls";
 import { parseRoute } from "~/lib/route-parse";
+import {
+  parseComposerPayload,
+  imageWireBlocks,
+} from "~/lib/composer-payload";
+import { readUploadBytes, getUpload } from "~/lib/uploads.server";
+import { getShare, type ShareManifest } from "~/lib/share.server";
 import type {
   ContentBlock,
   FolderSummary,
@@ -240,6 +246,14 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     return redirectToFreshOrSessions(p.folder, grouped, folder);
   }
   const { state, session } = found;
+  // The share-target hand-off (?shared=<id>, staged by the
+  // service worker — see share.server.ts): resolve the manifest
+  // server-side so the Composer seeds with no client fetch.
+  // Consumed once on mount, then stripped from the URL.
+  const sharedId = url.searchParams.get("shared");
+  const shared: ShareManifest | undefined = sharedId
+    ? getShare(sharedId)
+    : undefined;
   return {
     k: "chat" as const,
     folders: grouped,
@@ -258,6 +272,13 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     // Composer seeds as an @-mention on mount, then strips from
     // the URL so reloads don't re-attach.
     attach: url.searchParams.get("attach") ?? undefined,
+    // The share-target hand-off's id when its manifest resolved
+    // (an unknown id falls through undefined — nothing seeds).
+    shared,
+    // Whether the agent owning THIS session accepts image
+    // content blocks (paperclip gating, agent-agnostic —
+    // promptCapabilities.image from initialize).
+    imageSupported: state.promptCapabilities?.image === true,
     availableModels: state.availableModels,
     availableModes: state.availableModes,
     currentModelId: state.currentModelId,
@@ -307,7 +328,16 @@ export async function action({ params, request }: Route.ActionArgs) {
   if (p.k === "sessions") {
     if (intent === "new") {
       const s = await sessionManager.createSession(p.folder);
-      return redirect(sessionUrl(p.folder, s.id));
+      // The share-target hand-off (see share.server.ts): the
+      // ShareSheet's "+ New chat" submits the staged share id
+      // along with intent=new, so the fresh chat the redirect
+      // lands on seeds the shared text/images on mount.
+      const shared = form.get("shared");
+      const suffix =
+        typeof shared === "string" && shared
+          ? `?shared=${encodeURIComponent(shared)}`
+          : "";
+      return redirect(sessionUrl(p.folder, s.id) + suffix);
     }
     return { error: "Unknown intent" };
   }
@@ -316,13 +346,44 @@ export async function action({ params, request }: Route.ActionArgs) {
       sessionManager.cancel(p.folder, p.sessionId);
       return { ok: true };
     }
-    // The composer submits JSON: { text: string, resources: ResourceRef[] }
-    // where each ResourceRef is { path, name, mimeType?, size? }.
-    // We expand it into ACP content blocks: a leading text block
-    // plus a resource_link per mention.
-    const blocks = parseComposerPayload(form.get("payload"));
-    if (!blocks) return { error: "Invalid payload" };
-    if (blocks.length === 0) return { error: "Empty" };
+    // The composer submits JSON: { text, resources, images }
+    // where resources are { path, name, mimeType?, size? } file
+    // mentions and images are { id, name } upload-store refs.
+    // We expand it into ACP content blocks: a leading text block,
+    // a resource_link per mention, and an image content block +
+    // `[Image: <id>]` marker pair per uploaded image (see
+    // composer-payload.ts for the marker convention).
+    const parsed = parseComposerPayload(form.get("payload"));
+    if (!parsed) return { error: "Invalid payload" };
+    const { blocks, imageIds } = parsed;
+    if (blocks.length === 0 && imageIds.length === 0) {
+      return { error: "Empty" };
+    }
+    if (imageIds.length > 0) {
+      // Agent-agnostic gating: only agents that advertised
+      // promptCapabilities.image may receive image blocks.
+      const found = sessionManager.lookupSession(p.folder, p.sessionId);
+      if (!found) return { error: "Unknown session" };
+      if (found.state.promptCapabilities?.image !== true) {
+        return {
+          error: "This agent doesn't accept images — send text instead",
+        };
+      }
+      for (const id of imageIds) {
+        const meta = getUpload(id);
+        const bytes = meta ? await readUploadBytes(id) : null;
+        if (!meta || !bytes) {
+          return { error: `Image ${id} not found — attach it again` };
+        }
+        blocks.push(
+          ...imageWireBlocks({
+            id,
+            mimeType: bytes.mimeType,
+            data: bytes.bytes.toString("base64"),
+          }),
+        );
+      }
+    }
     void sessionManager.sendMessage(p.folder, p.sessionId, blocks);
     return { ok: true };
   }
@@ -332,52 +393,6 @@ export async function action({ params, request }: Route.ActionArgs) {
 /** Timer helper for the loader's bounded session/list wait. */
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-/**
- * Decode the Composer's JSON payload into ACP content blocks.
- * Returns null on parse failure. An empty payload is not an
- * error — the caller checks for emptiness and reports it.
- */
-function parseComposerPayload(
-  raw: FormDataEntryValue | null,
-): ContentBlock[] | null {
-  if (typeof raw !== "string" || !raw) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const text =
-    typeof (parsed as { text?: unknown }).text === "string"
-      ? ((parsed as { text: string }).text as string).trim()
-      : "";
-  const resources: ContentBlock[] = [];
-  const rawResources = (parsed as { resources?: unknown }).resources;
-  if (Array.isArray(rawResources)) {
-    for (const r of rawResources) {
-      if (!r || typeof r !== "object") continue;
-      const path = (r as { path?: unknown }).path;
-      const name = (r as { name?: unknown }).name;
-      if (typeof path !== "string" || typeof name !== "string") continue;
-      resources.push({
-        type: "resource_link",
-        // file:// URI per RFC 3986 (three slashes: empty
-        // authority + absolute path)
-        uri: "file://" + (path.startsWith("/") ? path : "/" + path),
-        name,
-        mimeType:
-          typeof (r as { mimeType?: unknown }).mimeType === "string"
-            ? ((r as { mimeType: string }).mimeType as string)
-            : undefined,
-      });
-    }
-  }
-  return text
-    ? [{ type: "text", text }, ...resources]
-    : resources;
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {

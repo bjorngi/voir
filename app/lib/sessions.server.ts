@@ -6,6 +6,10 @@ import {
 } from "./acp-client.server";
 import { capture as captureTimeline } from "./timeline.server";
 import { sessionStatusStore } from "./session-status.server";
+import {
+  rewriteImageMarkers,
+} from "./composer-payload";
+import { resolveUploads } from "./uploads.server";
 import type {
   ActivityRow,
   ActivityState,
@@ -15,6 +19,7 @@ import type {
   ContentBlock,
   ControlUpdate,
   FolderSummary,
+  ImageRef,
   SessionSummary,
   SlashCommand,
 } from "./chat-types";
@@ -134,7 +139,7 @@ class SessionManager {
       transport: () => new HttpJsonRpcTransport(opts.agentUrl),
     });
     this.attachClientNotifications(key, client);
-    await client.start();
+    const init = await client.start();
     this.invalidateListCache(key);
 
     if (existing) {
@@ -147,6 +152,7 @@ class SessionManager {
       this.clients.set(key, client);
       existing.agentUrl = opts.agentUrl;
       if (opts.agentName !== undefined) existing.agentName = opts.agentName;
+      existing.promptCapabilities = init.agentCapabilities?.promptCapabilities;
       this.sweepPresetChange(existing, opts.preset);
       existing.presetOptions = opts.presetOptions;
       existing.supervisor = opts.supervisor;
@@ -175,6 +181,7 @@ class SessionManager {
       availableModes: [],
       currentModeId: null,
       currentModelId: null,
+      promptCapabilities: init.agentCapabilities?.promptCapabilities,
     };
     this.folders.set(key, state);
     this.clients.set(key, client);
@@ -833,18 +840,23 @@ class SessionManager {
 
     // For the visible user message in the transcript, collapse the
     // content blocks into a single string. resource_links show up as
-    // "@<name>"; the @-chips above the message (when wired) will
-    // render the full attachment list.
-    const displayText = content
+    // "@<name>"; `[Image: <id>]` marker lines (see
+    // composer-payload.ts) resolve to thumbnails on the message —
+    // resolved marker lines drop out of the display text, unknown
+    // ids keep their raw line. The same projection runs on replay,
+    // so live and replayed messages are identical.
+    const rawText = content
       .map((c) => (c.type === "text" ? c.text ?? "" : c.name ? "@" + c.name : ""))
       .filter(Boolean)
       .join("\n");
+    const { text: displayText, images } = projectImageTurn(rawText);
 
     const userMsg: ChatMessage = {
       id: cryptoRandom(),
       role: "user",
       kind: "text",
       text: displayText,
+      images: images.length > 0 ? images : undefined,
       at: Date.now(),
     };
     session.messages.push(userMsg);
@@ -1269,11 +1281,17 @@ class SessionManager {
       this.maybeClaimInferredBusy(session);
       const text = update.content.type === "text" ? update.content.text ?? "" : "";
       if (!text) return;
+      // Image markers survive the replay as text (pi-acp's load
+      // normalizes image content to nothing — uploads.server.ts);
+      // re-attach the thumbnails from the store so the
+      // replayed transcript matches the live one.
+      const { text: display, images } = projectImageTurn(text);
       session.messages.push({
         id,
         role: "user",
         kind: "text",
-        text,
+        text: display,
+        images: images.length > 0 ? images : undefined,
         at: Date.now(),
       });
       this.broadcast(session, session.messages[session.messages.length - 1]);
@@ -1816,6 +1834,18 @@ export interface FolderState {
   /** Currently active model id, mirrored from current_model_update. */
   currentModelId: string | null;
   /**
+   * What the agent can accept in `session/prompt` content blocks
+   * (ACP `promptCapabilities`, advertised at initialize). The
+   * composer's paperclip is gated on `image` — agents that never
+   * advertise it never offer the affordance (agent-agnostic
+   * gating, no per-agent special cases).
+   */
+  promptCapabilities?: {
+    image?: boolean;
+    audio?: boolean;
+    embeddedContext?: boolean;
+  };
+  /**
    * Supervisor awareness (absent for one-shot `acp-spawn`
    * agents — they have no preset to switch). Carried by the
    * registration POST:
@@ -1886,6 +1916,21 @@ function promptText(content: ContentBlock[]): string {
     .join("\n");
 }
 
+/**
+ * Project a user turn's wire text into the display form:
+ * `[Image: <id>]` markers resolve against the upload store,
+ * drop out of the text, and become the message's `images`
+ * array (thumbnails). Shared by the live send path and the
+ * replay path so both transcripts render identically. See
+ * composer-payload.ts / uploads.server.ts for the convention.
+ */
+function projectImageTurn(text: string): {
+  text: string;
+  images: ImageRef[];
+} {
+  return rewriteImageMarkers(text, (id) => resolveUploads([id])[0]);
+}
+
 function latestPlan(session: SessionState): string[] {
   for (let i = session.messages.length - 1; i >= 0; i--) {
     const m = session.messages[i];
@@ -1925,6 +1970,7 @@ export function folderSummary(state: FolderState): FolderSummary {
     presetOptions: state.presetOptions,
     status: state.status,
     lastSeenAt: state.lastSeenAt,
+    image: state.promptCapabilities?.image === true,
     sessions: Array.from(state.sessions.values())
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((s) => ({

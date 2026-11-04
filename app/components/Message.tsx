@@ -133,12 +133,40 @@ function DebugButton({ msg }: { msg: ChatMessage }) {
 
 function Text({ m }: { m: ChatMessage & { kind: "text" } }) {
   const isUser = m.role === "user";
+  const images = isUser && m.images?.length ? m.images : undefined;
   return (
     <div className={"relative px-4 py-3 " + (isUser ? "bg-neutral-900" : "")}>
       <DebugButton msg={m} />
-      <div className="text-[15px] leading-relaxed text-neutral-100">
-        <Markdown text={m.text} />
-      </div>
+      {m.text && (
+        <div className="text-[15px] leading-relaxed text-neutral-100">
+          <Markdown text={m.text} />
+        </div>
+      )}
+      {/* Attached image thumbnails (uploads.server.ts). The
+          display text no longer carries the resolved marker
+          lines — the images speak for themselves. Tap opens the
+          full-size bytes (same URL, new tab). */}
+      {images && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {images.map((img) => (
+            <a
+              key={img.id}
+              href={`/api/uploads/${img.id}`}
+              target="_blank"
+              rel="noopener"
+              className="block h-28 w-28 overflow-hidden border border-neutral-700 bg-neutral-800 active:border-neutral-500"
+              aria-label={img.name ?? "Attached image"}
+            >
+              <img
+                src={`/api/uploads/${img.id}`}
+                alt={img.name ?? "Attached image"}
+                loading="lazy"
+                className="h-full w-full object-cover"
+              />
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

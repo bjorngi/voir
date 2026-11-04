@@ -14,6 +14,7 @@ import { usePush } from "~/lib/use-push";
 import { WorkingOnSection } from "~/components/ActiveSessions";
 import { FolderTree } from "~/components/FolderTree";
 import { Picker } from "~/components/Picker";
+import { ShareSheet } from "~/components/ShareSheet";
 import { SessionDebugButton } from "~/components/SessionDebugButton";
 import { ChangesView } from "~/components/ChangesView";
 import { FileExplorer } from "~/components/FileExplorer";
@@ -51,6 +52,29 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
   const { rows: activeRows, unstar } = useSessionStatus(
     data.k === "folders" ? data.active : undefined,
   );
+
+  // Share-target landing (see share.server.ts): the service
+  // worker redirects an OS share to /?shared=<id>; while the
+  // param is present, the ShareSheet overlay offers the pick
+  // of target chats. Dismissing strips the param — the staged
+  // share stays server-side, picking navigates to the chat
+  // which consumes it once.
+  const [sharedId, setSharedId] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setSharedId(new URL(window.location.href).searchParams.get("shared"));
+    } catch {}
+  }, []);
+  const dismissShare = () => {
+    setSharedId(null);
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("shared")) {
+        url.searchParams.delete("shared");
+        history.replaceState(history.state, "", url);
+      }
+    } catch {}
+  };
 
   // The tab bar lives between the header and the body for
   // chat, files and changes. Sessions-list and root views don't
@@ -158,6 +182,15 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
 
         {pickerOpen && (
           <Picker active={activeRows} onClose={() => setPickerOpen(false)} />
+        )}
+
+        {sharedId && (
+          <ShareSheet
+            id={sharedId}
+            activeRows={activeRows}
+            folders={data.folders ?? []}
+            onClose={dismissShare}
+          />
         )}
       </main>
     </div>

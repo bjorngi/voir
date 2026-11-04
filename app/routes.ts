@@ -39,4 +39,15 @@ export default [
   }),
   // Machine-initiated conversations (docs/two-way.md Mode 1).
   route("api/inbox", "routes/api.inbox.tsx"),
+  // Image uploads (composer attach, paste/drop — see
+  // uploads.server.ts) and the share-target staging store
+  // (PWA share target — see share.server.ts).
+  route("api/uploads", "routes/api.uploads.tsx"),
+  route("api/uploads/:id", "routes/api.uploads.tsx", {
+    id: "api-uploads-id",
+  }),
+  route("api/share", "routes/api.share.tsx"),
+  route("api/share/:id", "routes/api.share.tsx", {
+    id: "api-share-id",
+  }),
 ] satisfies RouteConfig;

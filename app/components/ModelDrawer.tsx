@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AvailableModel, AvailableMode } from "~/lib/chat-types";
+import { modelVision } from "~/lib/chat-types";
 
 /**
  * Inline panel for switching the session's active model, mode,
@@ -125,6 +126,17 @@ export function ModelDrawer({
   const hasModes = modes.length > 0;
   const hasPresets = presets.length > 0;
   const empty = !hasModels && !hasModes && !hasPresets;
+  // Vision state of the CURRENT model (tri-state; undefined →
+  // the line is omitted — the agent didn't advertise input
+  // modalities, so voir says nothing rather than guessing).
+  const currentVision = currentModelId
+    ? modelVision(
+        models.find((m) => m.modelId === currentModelId) ?? {
+          modelId: currentModelId,
+        },
+      )
+    : undefined;
+  const visionCount = models.filter((m) => modelVision(m) === true).length;
 
   return (
     <div>
@@ -183,7 +195,12 @@ export function ModelDrawer({
                     disabled={pending.size > 0}
                     options={models.map((m) => ({
                       value: m.modelId,
-                      label: m.name ?? m.modelId,
+                      label:
+                        (m.name ?? m.modelId) +
+                        // Vision marker so the picker itself separates
+                        // image-capable choices (plain text — native
+                        // <option> can't be styled).
+                        (modelVision(m) === true ? " · vision" : ""),
                     }))}
                     onChange={(v) => onPicked?.("model", v)}
                   />
@@ -212,6 +229,24 @@ export function ModelDrawer({
                     onChange={(v) => onPickPreset?.(v)}
                   />
                 )}
+              </div>
+            )}
+            {/* Images status: what the CURRENT model will do with
+                an attached image (pi replaces image blocks with an
+                omitted-placeholder on text-only models — the model
+                literally answers "image was omitted"). Tri-state:
+                hidden when the agent didn't advertise input. */}
+            {hasModels && currentVision !== undefined && (
+              <div
+                className={
+                  "px-3 py-1.5 font-mono text-[11px] " +
+                  (currentVision ? "text-emerald-400" : "text-amber-300")
+                }
+                data-testid="drawer-vision"
+              >
+                {currentVision
+                  ? "Images ✓ — this model sees attached images"
+                  : `Images ✗ — this model can't see them (pick one marked · vision; ${visionCount} of ${models.length} qualify)`}
               </div>
             )}
             {onClearCache && (

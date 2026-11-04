@@ -39,11 +39,17 @@ const MODELS = [
     modelId: "mock/cheery-1",
     name: "Cheery 1 (mock)",
     description: "A cheerful, lightweight mock model.",
+    // _meta.piAcp.input mirrors the voir pi-acp patch (docs/
+    // images-and-share.md): cheery accepts images, cryptic is
+    // text-only — exercises the drawer's image markers and the
+    // composer's vision warning.
+    _meta: { piAcp: { input: ["text", "image"] } },
   },
   {
     modelId: "mock/cryptic-2",
     name: "Cryptic 2 (mock)",
     description: "Speaks in riddles. For vibes.",
+    _meta: { piAcp: { input: ["text"] } },
   },
 ];
 const MODES = [
@@ -512,7 +518,7 @@ const handlers = {
       protocolVersion: protocolVersion ?? 1,
       agentCapabilities: {
         loadSession: true,
-        promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        promptCapabilities: { image: true, audio: false, embeddedContext: false },
         sessionCapabilities: { list: true, resume: true },
       },
       agentInfo: { name: "mock-acp", title: "Mock ACP", version: "0.1.0" },
@@ -611,6 +617,12 @@ const handlers = {
       .filter(Boolean)
       .join(" ")
       .trim();
+    // Image blocks (with their `[Image: <id>]` markers) exercise
+    // the whole wire path — see docs/images-and-share.md.
+    const imageCount = (prompt ?? []).filter(
+      (c) => c?.type === "image" && typeof c?.data === "string",
+    ).length;
+    const imageNote = imageCount > 0 ? ` (+${imageCount} image${imageCount === 1 ? "" : "s"})` : "";
 
     if (userText) {
       s.history.push({
@@ -619,7 +631,7 @@ const handlers = {
       });
       emit({
         sessionUpdate: "agent_thought_chunk",
-        content: { type: "text", text: `You said: "${userText.slice(0, 80)}".\n` },
+        content: { type: "text", text: `You said: "${userText.slice(0, 80)}"${imageNote}.\n` },
       });
       await sleep(STREAM_DELAY_MS);
     }

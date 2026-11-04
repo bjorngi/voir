@@ -39,15 +39,52 @@ export interface ToolCallContentBlock {
 }
 
 /**
+ * An image attached to a user message (see uploads.server.ts
+ * and composer-payload.ts for the store/marker machinery).
+ *
+ * The `id` references the upload store and is the URL handle
+ * (`/api/uploads/<id>`); name/mimeType are display hints.
+ */
+export interface ImageRef {
+  id: string;
+  name?: string;
+  mimeType?: string;
+}
+
+/** A model advertised by the agent. The id is the stable handle
+ * the client uses to select a model; name/description are UI
+ * hints. Mirrors the ACP `ModelInfo` shape as exposed by
+ * pi-acp.
+ */
+/**
  * A model advertised by the agent. The id is the stable handle
  * the client uses to select a model; name/description are UI
  * hints. Mirrors the ACP `ModelInfo` shape as exposed by
  * pi-acp.
+ *
+ * `_meta` is the ACP extension point, passed through verbatim:
+ * pi-acp (voir patch, docs/images-and-share.md) puts pi's
+ * per-model input modalities there (`_meta.piAcp.input:
+ * ["text", "image"]`); agents without the patch omit it and
+ * modelVision() reports `undefined` (unknown, not text-only).
  */
 export interface AvailableModel {
   modelId: string;
   name?: string;
   description?: string;
+  _meta?: { piAcp?: { input?: string[] } };
+}
+
+/**
+ * Whether this model accepts image content blocks — tri-state:
+ * `true` = vision, `false` = text-only (the agent will show an
+ * omitted-image placeholder), `undefined` = the agent didn't
+ * advertise input modalities (no patch / non-pi agent).
+ */
+export function modelVision(m: AvailableModel): boolean | undefined {
+  const input = m?._meta?.piAcp?.input;
+  if (!Array.isArray(input)) return undefined;
+  return input.includes("image");
 }
 
 /**
@@ -79,6 +116,14 @@ export type ChatMessage =
       text: string;
       /** True for the currently-streaming text message of a turn. */
       streaming?: boolean;
+      /**
+       * Images attached to this user message, resolved from the
+       * upload store by the `[Image: <id>]` markers in `text`.
+       * Rendered as thumbnails by Message; live sends attach
+       * them directly, replays re-attach them from the markers
+       * (see composer-payload.ts / uploads.server.ts).
+       */
+      images?: ImageRef[];
       at: number;
     }
   | {
@@ -183,6 +228,14 @@ export interface FolderSummary {
   status: "ok" | "degraded";
   /** Epoch ms of the last successful heartbeat ping. */
   lastSeenAt: number;
+  /**
+   * Whether this agent accepts image content blocks in
+   * `session/prompt` (ACP `promptCapabilities.image`, advertised
+   * at initialize). Gates the composer's paperclip and the share
+   * sheet's per-folder affordance — agents that can't take
+   * images never show the option.
+   */
+  image: boolean;
   sessions: SessionSummary[];
   /**
    * Cheap diff summary for the worktree: how many files

@@ -9,6 +9,21 @@
   "background_color": "#0b0d10",
   "theme_color": "#0b0d10",
   "lang": "en",
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "files": [
+        {
+          "name": "images",
+          "accept": ["image/*"]
+        }
+      ]
+    }
+  },
   "icons": [
     {
       "src": "/icons/icon-192.png",

@@ -21,6 +21,7 @@ import { MessageBubble } from "~/components/Message";
 import { Composer } from "~/components/Composer";
 import { ModelDrawer, usePendingSet } from "~/components/ModelDrawer";
 import { VoicePanel } from "./VoicePanel";
+import { modelVision } from "~/lib/chat-types";
 
 type ChatData = Extract<ChatLoaderData, { k: "chat" }>;
 
@@ -698,6 +699,23 @@ export function ChatView({
             folder={folder.path}
             sessionId={initial.id}
             initialAttach={data.attach}
+            imageSupported={data.imageSupported}
+            currentModelVision={
+              currentModelId
+                ? modelVision(
+                    availableModels.find((m) => m.modelId === currentModelId) ?? {
+                      modelId: currentModelId,
+                    },
+                  )
+                : undefined
+            }
+            initialShared={data.shared
+              ? {
+                  title: data.shared.title,
+                  text: data.shared.text,
+                  images: data.shared.images,
+                }
+              : undefined}
             busy={busy}
             queueDepth={queueDepth}
             commands={commands}

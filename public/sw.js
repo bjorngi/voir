@@ -38,12 +38,51 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+
+  // -- PWA share target (docs/images-and-share.md) ------------------
+  // The OS POSTs a shared image/text to the manifest's action
+  // URL. Stage it server-side (the files go through the normal
+  // upload store; the manifest references their ids), then land
+  // on /?shared=<id> — the ShareSheet overlay offers the pick of
+  // target chats. respondWith is called synchronously (Chrome
+  // requires it before any await); the async work happens inside.
+  if (request.method === "POST" && url.pathname === "/share") {
+    event.respondWith(
+      (async () => {
+        try {
+          const form = await request.formData();
+          const res = await fetch("/api/share", {
+            method: "POST",
+            body: form,
+          });
+          if (!res.ok) throw new Error(`staging failed: ${res.status}`);
+          const manifest = await res.json();
+          return Response.redirect(
+            new URL("/?shared=" + encodeURIComponent(manifest.id),
+              self.location.origin).href,
+            303,
+          );
+        } catch (err) {
+          return new Response(
+            "Voir could not receive this share (server unreachable or rejected it). " +
+              "Open Voir and share again.",
+            {
+              status: 502,
+              headers: { "Content-Type": "text/plain; charset=utf-8" },
+            },
+          );
+        }
+      })(),
+    );
+    return;
+  }
+
   // Only same-origin document navigations. Everything else —
   // Vite assets, fonts, API calls, the SSE stream — goes to the
   // network untouched.
   if (request.mode !== "navigate") return;
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
   event.respondWith(
     fetch(request).catch(() =>
       caches

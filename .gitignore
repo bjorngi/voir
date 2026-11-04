@@ -16,3 +16,6 @@ dev-data/session-status.json
 # Image uploads + share-target staging (docs/images-and-share.md)
 dev-data/uploads/
 dev-data/shares.json
+# Search index — persisted transcript snapshots for cross-session
+# search (docs/search.md); agent truth owns what the chat renders.
+dev-data/search-index/

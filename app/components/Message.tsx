@@ -9,6 +9,7 @@ import type {
 } from "~/lib/chat-types";
 import { buildInlineDiff } from "~/lib/inline-diff";
 import { narrationChunks } from "~/lib/narration";
+import { msgDomId } from "~/lib/urls";
 import {
   matchFenced,
   matchInline,
@@ -511,7 +512,7 @@ function Text({
   );
   const playable = !!onPlay && !!speakable && chunks.length > 0;
   return (
-    <div className={"relative px-4 py-3 " + (isUser ? "bg-neutral-900" : "")}>
+    <div id={msgDomId(m.id)} className={"relative px-4 py-3 " + (isUser ? "bg-neutral-900" : "")}>
       <DebugButton msg={m} />
       {playable && (
         <PlayButton
@@ -560,7 +561,7 @@ function Text({
 function Thought({ m }: { m: ChatMessage & { kind: "thought" } }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="relative px-4 py-2">
+    <div id={msgDomId(m.id)} className="relative px-4 py-2">
       <DebugButton msg={m} />
       <button
         type="button"
@@ -714,7 +715,7 @@ function QuestionCard({
 
   if (done) {
     return (
-      <div className="relative px-4 py-2 text-[12px]">
+      <div id={msgDomId(m.id)} className="relative px-4 py-2 text-[12px]">
         <DebugButton msg={m} />
         <span className="font-mono uppercase tracking-wide text-emerald-400">
           ask_user
@@ -725,7 +726,7 @@ function QuestionCard({
   }
 
   return (
-    <div className="relative border border-neutral-800 bg-neutral-950 px-4 py-3">
+    <div id={msgDomId(m.id)} className="relative border border-neutral-800 bg-neutral-950 px-4 py-3">
       <DebugButton msg={m} />
       <div className="mb-2 font-mono text-[11px] uppercase tracking-wide text-amber-400">
         {m.status === "pending" || m.status === "in_progress"
@@ -844,7 +845,7 @@ function Tool({
   // not only inside the collapsed outline).
   const images = toolImageBlocks(m.content);
   return (
-    <div className="relative px-4 py-2">
+    <div id={msgDomId(m.id)} className="relative px-4 py-2">
       <DebugButton msg={m} />
       {hasNonDiff && (
         <button
@@ -980,7 +981,7 @@ function Diff({ path, oldText, newText }: { path: string; oldText: string; newTe
 
 function Plan({ m }: { m: ChatMessage & { kind: "plan" } }) {
   return (
-    <div className="relative px-4 py-2 pr-10 text-[13px] text-neutral-300">
+    <div id={msgDomId(m.id)} className="relative px-4 py-2 pr-10 text-[13px] text-neutral-300">
       <DebugButton msg={m} />
       <div className="mb-1 font-mono text-[11px] uppercase tracking-wide text-neutral-500">
         Plan

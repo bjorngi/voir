@@ -17,6 +17,8 @@ export default [
   // Voir-local session status overlay (docs/session-status.md):
   // the "Working on" snapshot (GET) and status transitions (POST).
   route("api/session-status", "routes/api.session-status.tsx"),
+  // Cross-session search (docs/search.md) — the picker's search box.
+  route("api/search", "routes/api.search.tsx"),
   route("api/timeline-restore", "routes/api.timeline-restore.tsx"),
   route("api/timeline-diff", "routes/api.timeline-diff.tsx"),
   route("api/commit", "routes/api.commit.tsx"),

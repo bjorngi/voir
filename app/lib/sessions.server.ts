@@ -10,6 +10,7 @@ import {
   rewriteImageMarkers,
 } from "./composer-payload";
 import { resolveUploads } from "./uploads.server";
+import { scheduleSearchIndex } from "./search.server";
 import type {
   ActivityRow,
   ActivityState,
@@ -582,6 +583,13 @@ class SessionManager {
     // still mid-turn, live chunks arriving after the boundary
     // re-claim it.
     this.clearInferredBusy(session);
+    // The replay is the complete transcript — index it. The
+    // standard debounce (not 0): the write reads session.messages
+    // LIVE at write time, and the replay race above can return
+    // early — 3s lets straddling chunks land in the index without
+    // re-scheduling on a quiet session (replay chunks never
+    // broadcast, so nothing would re-trigger the write).
+    scheduleSearchIndex(state.path, state.agentName, session);
     return session;
   }
 
@@ -699,6 +707,17 @@ class SessionManager {
 
   getSession(folder: string, sessionId: string): SessionState | undefined {
     return this.sessionAgent(folder, sessionId)?.sessions.get(sessionId);
+  }
+
+  /** The agent state that owns a session id (stubs included —
+   *  listSessions hydrates stubs into their owning map). Used by
+   *  the search index (readSearchIndex keys files by agent) and
+   *  the broadcast-side write scheduler. */
+  agentOfSession(sessionId: string): FolderState | undefined {
+    for (const state of this.folders.values()) {
+      if (state.sessions.has(sessionId)) return state;
+    }
+    return undefined;
   }
 
   /**
@@ -1091,6 +1110,12 @@ class SessionManager {
     // session.messages after the replay completes, and a resync
     // control message asks live tabs to reconnect.
     if (session.replaying) return;
+    // Search index: any live message landing schedules a
+    // debounced persist (search.server.ts) — restarts keep
+    // their transcripts findable. Cheap: a map scan (folders,
+    // not sessions) + timer reset per message.
+    const owner = this.agentOfSession(session.id);
+    if (owner) scheduleSearchIndex(owner.path, owner.agentName, session);
     const set = this.listeners.get(session.id);
     if (!set) return;
     for (const l of set) {

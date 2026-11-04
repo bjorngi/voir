@@ -135,3 +135,13 @@ body {
 }
 
 
+
+/* Search deep-link (?focus=<msg id>): the jumped-to message row
+   flashes once so it's findable in the transcript. */
+.msg-flash {
+  animation: msg-flash 2s ease-out 1;
+}
+@keyframes msg-flash {
+  0% { background-color: rgba(16, 185, 129, 0.26); }
+  100% { background-color: transparent; }
+}

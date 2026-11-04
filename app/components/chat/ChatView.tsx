@@ -11,7 +11,7 @@ import type {
   AvailableMode,
   ChatMessage,
 } from "~/lib/chat-types";
-import { streamUrl, sessionUrl } from "~/lib/urls";
+import { streamUrl, sessionUrl, msgDomId } from "~/lib/urls";
 import { nextNarrationChunk, narrationChunks } from "~/lib/narration";
 import { useAutoScroll, usePageVisible } from "~/lib/hooks";
 import type { Tts } from "~/lib/use-tts";
@@ -141,6 +141,29 @@ export function ChatView({
   }, [connected]);
   const visible = usePageVisible();
   const scrollRef = useAutoScroll<HTMLDivElement>([messages, visible]);
+
+  // ---------------------------------------------------------------------
+  // Search deep links: ?focus=<message id> (the picker's search
+  // results) scrolls that message into view once and flashes it.
+  // rAF so the mount-time auto-scroll (bottom) lands first and
+  // this scroll wins. A focus id the transcript no longer has
+  // (compacted or trimmed agent truth) degrades to a plain chat
+  // open — the row simply isn't there to find.
+  const focusRan = useRef(false);
+  useEffect(() => {
+    if (focusRan.current) return;
+    focusRan.current = true;
+    const focus = new URLSearchParams(window.location.search).get("focus");
+    if (!focus) return;
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(msgDomId(focus));
+      if (!el) return;
+      el.scrollIntoView({ block: "center" });
+      el.classList.add("msg-flash");
+      setTimeout(() => el.classList.remove("msg-flash"), 2200);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // Which ask_user tool calls have been answered: any user
   // message later in the transcript answers the card (see the

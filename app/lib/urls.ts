@@ -30,6 +30,14 @@ export function streamUrl(path: string, sessionId: string): string {
   return `/api/sessions/${sessionId}/stream?folder=${encodeURIComponent(path)}`;
 }
 
+/** DOM id for a message row. Search deep links (?focus=<msg id>)
+ *  scroll to it; ids are DOM-safe (message ids are typically
+ *  uuid-ish, but sanitize regardless — the DOM is not ours to
+ *  trust). */
+export function msgDomId(msgId: string): string {
+  return "m-" + msgId.replace(/[^\w-]/g, "_");
+}
+
 /**
  * Reconstruct an absolute folder path from the `:folder` route param.
  *

@@ -105,6 +105,11 @@ export function VoicePanel({
 
   const transcript = voice.draft || voice.interim;
   const selectedVoice = prefs.ttsVoice ?? tts.defaultVoice ?? "";
+  // Label of the picked voice (or the server default) — for the
+  // engine status line; empty when the engine has no configured
+  // voices at all (pure browser setup).
+  const selectedVoiceLabel =
+    tts.voices.find((v) => v.id === selectedVoice)?.label ?? "";
 
   return (
     <div className="relative shrink-0 border-t border-neutral-800 bg-neutral-950 px-3 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-3">
@@ -180,6 +185,32 @@ export function VoicePanel({
           <div className="drawer-panel">
             <div className="border border-neutral-800 bg-neutral-950 p-2">
               <div className="flex flex-col gap-2 p-2">
+                {/* Engine status: what is ACTUALLY speaking, not
+                    what is configured — the picker above keeps its
+                    Deepgram list through an outage, so this is the
+                    line that tells you you're on browser voices.
+                    The fallback self-heals (~2min, use-tts.ts);
+                    "offline" here is transient, and the amber
+                    color is the glance signal. */}
+                {tts.engine && (
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-widest text-neutral-500">
+                      Engine
+                    </span>
+                    <span
+                      className={
+                        "font-mono text-[11px] " +
+                        (tts.engine === "neural"
+                          ? "text-emerald-300"
+                          : "text-amber-300")
+                      }
+                    >
+                      {tts.engine === "neural"
+                        ? `Deepgram Aura${selectedVoiceLabel ? ` — ${selectedVoiceLabel}` : ""}`
+                        : "browser voices — neural offline, retrying"}
+                    </span>
+                  </div>
+                )}
                 <label className="flex min-w-0 flex-1 items-center gap-2">
                   <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-widest text-neutral-500">
                     Voice

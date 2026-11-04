@@ -29,6 +29,14 @@ const STORAGE_KEY = "voir:tts";
 // so we don't spin up a source node every frame.
 const NEURAL_BATCH_SAMPLES = 4800;
 
+// After the neural→browser fallback, how long to stay on browser
+// voices before trying neural again (the next speak, or a return
+// to the foreground). A maintenance restart of voir (or a flaky
+// proxy leg) must not degrade a long-lived PWA tab's voice for
+// the whole page session; a still-broken server just re-trips
+// the 3-strike and degrades again after another cooldown.
+const NEURAL_RETRY_MS = 2 * 60_000;
+
 export interface Tts {
   /** Any engine available (neural or browser). */
   supported: boolean;
@@ -110,12 +118,17 @@ export function useSpeechSynthesis(): Tts {
   const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const nextStartRef = useRef(0);
   const sampleRef = useRef<number[]>([]);
-  // Consecutive neural-socket failures — after a few, fall back to
-  // the browser voices for the session (production runs
-  // react-router-serve, which has no WebSocket support; without
-  // this the neural engine would reconnect forever and never
-  // say a word).
+  // Consecutive neural-socket failures — after a few, fall back
+  // to the browser voices until the retry cooldown passes (see
+  // NEURAL_RETRY_MS / retryNeural). Without this a dead endpoint
+  // would make the neural engine reconnect forever and never say
+  // a word. (The historical trigger — production running
+  // react-router-serve with no WebSocket support — is gone:
+  // bin/server.ts attaches the /api/tts WS; the remaining triggers
+  // are voir restarts and flaky proxy legs.)
   const failCountRef = useRef(0);
+  // When the fallback last tripped — the self-heal cooldown clock.
+  const degradedAtRef = useRef(0);
 
   const cancel = useCallback(() => {
     if (neuralRef.current) {
@@ -209,6 +222,7 @@ export function useSpeechSynthesis(): Tts {
       if (failCountRef.current >= 3) {
         setNeuralTts(false);
         neuralRef.current = false;
+        degradedAtRef.current = Date.now();
         const pending = queueRef.current;
         queueRef.current = [];
         if ("speechSynthesis" in window) {
@@ -277,10 +291,36 @@ export function useSpeechSynthesis(): Tts {
     }
   }, []);
 
+  /** Self-heal: flip back to the neural engine once the cooldown
+   *  has passed. Called from speak() and on foreground return —
+   *  the engine only got here by failing three connections in a
+   *  row, and "stays degraded until the next reload" was a
+   *  maintenance-restart footgun. A still-broken server re-trips
+   *  the 3-strike (a fresh window) and degrades again. */
+  const retryNeural = useCallback(() => {
+    if (neuralRef.current) return;
+    if (Date.now() - degradedAtRef.current < NEURAL_RETRY_MS) return;
+    degradedAtRef.current = 0;
+    failCountRef.current = 0;
+    setNeuralTts(true);
+    neuralRef.current = true;
+  }, []);
+
+  // Foreground return is the natural retry point on a phone: the
+  // tab backgrounded through the outage and came back after it.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") retryNeural();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [retryNeural]);
+
   const speak = useCallback(
     (text: string, sopts?: { force?: boolean; voice?: string; speed?: number }) => {
       if (!text) return;
       if (!enabledRef.current && !sopts?.force) return;
+      if (!neuralRef.current) retryNeural();
       if (neuralRef.current) {
         preparePlayback();
         speakNeural(text, sopts?.voice, sopts?.speed);
@@ -295,7 +335,7 @@ export function useSpeechSynthesis(): Tts {
         window.speechSynthesis.speak(u);
       }
     },
-    [preparePlayback, speakNeural],
+    [preparePlayback, speakNeural, retryNeural],
   );
 
   const speaking = useCallback(() => {

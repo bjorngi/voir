@@ -8,6 +8,7 @@ import type {
   ToolCallContentBlock,
 } from "~/lib/chat-types";
 import { buildInlineDiff } from "~/lib/inline-diff";
+import { narrationChunks } from "~/lib/narration";
 import {
   matchFenced,
   matchInline,
@@ -44,6 +45,9 @@ export const MessageBubble = memo(function MessageBubble({
   answered = false,
   onSendAnswer,
   onPrefill,
+  onPlay,
+  playing,
+  speakable,
 }: {
   msg: ChatMessage;
   /** True when a user message follows this one in the transcript —
@@ -56,9 +60,29 @@ export const MessageBubble = memo(function MessageBubble({
   /** Drop text into the composer as an editable draft (rich-card
    *  "prefill" actions — the voice tap-to-edit seam, re-used). */
   onPrefill?: (text: string) => void;
+  /** Narrate this message on demand (retro playback — the per-
+   *  message ▶). Provided by ChatView, which owns the TTS engine;
+   *  must stay identity-stable across renders (memo). The button
+   *  passes its own `isPlaying` state so the callback doesn't have
+   *  to close over any. */
+  onPlay?: (m: ChatMessage, isPlaying: boolean) => void;
+  /** True while THIS message is the one being narrated on demand
+   *  (the ■ state). */
+  playing?: boolean;
+  /** Whether any TTS engine is available — hides ▶ when speaking
+   *  is impossible (SSR renders it away too). */
+  speakable?: boolean;
 }) {
   if (msg.kind === "text")
-    return <Text m={msg} actions={richActions({ onSendAnswer, onPrefill })} />;
+    return (
+      <Text
+        m={msg}
+        actions={richActions({ onSendAnswer, onPrefill })}
+        onPlay={onPlay}
+        playing={playing}
+        speakable={!!speakable}
+      />
+    );
   if (msg.kind === "thought") return <Thought m={msg} />;
   if (msg.kind === "tool") {
     // The ask_user extension (sentinel mode) completes the tool call
@@ -420,21 +444,81 @@ function PlainCode({ text }: { text: string }) {
 }
 
 // -----------------------------------------------------------------------
+// Play button — retro narration, on demand
+// -----------------------------------------------------------------------
+
+/**
+ * The ▶ beside the debug button: narrate this message through
+ * the same engines the live narration uses (ChatView's
+ * playMessage owns the queue). While this message is the one
+ * playing, it's a ■ that stops it; tapping another message's ▶
+ * switches the playback there.
+ */
+function PlayButton({
+  playing,
+  onToggle,
+}: {
+  playing: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="absolute right-9 top-1 z-10">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={
+          "inline-flex h-6 w-6 items-center justify-center font-mono text-[11px] leading-none " +
+          (playing
+            ? "text-emerald-400 active:bg-neutral-800"
+            : "text-neutral-600 active:bg-neutral-800 active:text-neutral-300")
+        }
+        aria-label={playing ? "Stop playback" : "Play message"}
+        title={playing ? "Stop playback" : "Play message"}
+      >
+        {playing ? "■" : "▶"}
+      </button>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------
 // Text — flat, left-aligned, markdown
 // -----------------------------------------------------------------------
 
 function Text({
   m,
   actions,
+  onPlay,
+  playing,
+  speakable,
 }: {
   m: ChatMessage & { kind: "text" };
   actions: RenderActions;
+  /** Retro playback (see MessageBubble). The button shows on
+   *  settled messages with something to say — a pure code block
+   * would be a silent tap. */
+  onPlay?: (m: ChatMessage, isPlaying: boolean) => void;
+  playing?: boolean;
+  speakable?: boolean;
 }) {
   const isUser = m.role === "user";
   const images = isUser && m.images?.length ? m.images : undefined;
+  // Drained once per settled text (memoized on the text; while
+  // streaming the ternary short-circuits to [] at zero cost).
+  const chunks = useMemo(
+    () => (!m.streaming && m.text ? narrationChunks(m.text, { final: true }) : []),
+    [m.streaming, m.text],
+  );
+  const playable = !!onPlay && !!speakable && chunks.length > 0;
   return (
     <div className={"relative px-4 py-3 " + (isUser ? "bg-neutral-900" : "")}>
       <DebugButton msg={m} />
+      {playable && (
+        <PlayButton
+          playing={!!playing}
+          onToggle={() => onPlay!(m, !!playing)}
+        />
+      )}
       {m.text && (
         <div className="text-[15px] leading-relaxed text-neutral-100">
           <Markdown text={m.text} streaming={!!m.streaming} actions={actions} />

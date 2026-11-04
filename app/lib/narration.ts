@@ -160,3 +160,25 @@ export function nextNarrationChunk(
   }
   return opts.final ? { text: "", spoken: Math.max(spoken, raw.length) } : null;
 }
+
+/**
+ * Drain a whole message into its speakable chunks, in order —
+ * the retro playback path (the per-message ▶ button): one call
+ * per message instead of tracking raw positions while streaming.
+ * Same rules as live narration (code skipped, formatting
+ * stripped); [] means there is nothing worth saying aloud.
+ */
+export function narrationChunks(
+  raw: string,
+  opts: { final: boolean },
+): string[] {
+  const out: string[] = [];
+  let spoken = 0;
+  while (spoken < raw.length) {
+    const chunk = nextNarrationChunk(raw, spoken, opts);
+    if (!chunk) break;
+    spoken = chunk.spoken;
+    if (chunk.text) out.push(chunk.text);
+  }
+  return out;
+}

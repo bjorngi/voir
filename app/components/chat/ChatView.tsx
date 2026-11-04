@@ -12,7 +12,7 @@ import type {
   ChatMessage,
 } from "~/lib/chat-types";
 import { streamUrl, sessionUrl } from "~/lib/urls";
-import { nextNarrationChunk } from "~/lib/narration";
+import { nextNarrationChunk, narrationChunks } from "~/lib/narration";
 import { useAutoScroll, usePageVisible } from "~/lib/hooks";
 import type { Tts } from "~/lib/use-tts";
 import { useVoiceMode } from "~/lib/use-voice";
@@ -540,6 +540,74 @@ export function ChatView({
   }, [messages, tts, voice.active, voicePrefs.narrate, voicePrefs.ttsVoice, voicePrefs.ttsSpeed]);
 
   // ---------------------------------------------------------------------
+  // Retro playback: the ▶ on each settled text message re-narrates
+  // it on demand — the same markdown-aware chunker as live
+  // narration, forced past the global toggle (the tap IS the
+  // intent). One play at a time; the badge clears when the queue
+  // drains.
+  //
+  // Identity discipline: the tts hook returns a fresh object every
+  // render, and MessageBubble is memoized — so `onPlay` must stay
+  // identity-stable or every session-status poll re-renders (and
+  // re-parses markdown in) the whole transcript, flickering the UI
+  // and clearing any text selection. Only the hook's stable
+  // useCallbacks and primitives are closed over, and the is-playing
+  // toggle rides the call args instead of reading `playingId` state
+  // (which would change the callback identity on every play).
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const { speak, cancel: cancelTts, speaking, preparePlayback } = tts;
+  const playMessage = useCallback(
+    (m: ChatMessage, isPlaying: boolean) => {
+      if (m.kind !== "text" || m.streaming || !m.text) return;
+      preparePlayback(); // the tap is the gesture that unlocks audio
+      cancelTts();
+      if (isPlaying) {
+        setPlayingId(null); // tap-to-stop
+        return;
+      }
+      setPlayingId(m.id);
+      for (const text of narrationChunks(m.text, { final: true })) {
+        speak(text, {
+          force: true,
+          // The voice panel's picks apply here too — replay should
+          // sound like voice mode, not swap voices on the user.
+          voice: voicePrefs.ttsVoice ?? undefined,
+          speed: voicePrefs.ttsSpeed,
+        });
+      }
+    },
+    [speak, cancelTts, preparePlayback, voicePrefs.ttsVoice, voicePrefs.ttsSpeed],
+  );
+  // speaking() is a probe, not reactive state — poll while a
+  // retro play runs so the ■ flips back to ▶ when audio drains.
+  useEffect(() => {
+    if (!playingId) return;
+    const t = setInterval(() => {
+      if (!speaking()) setPlayingId(null);
+    }, 400);
+    return () => clearInterval(t);
+  }, [playingId, speaking]);
+  // A new user message ends a retro play — never talk over the
+  // next turn. Ungated: retro playback works with the Read-aloud
+  // toggle off, where the narration effect above never runs.
+  const prevUsersRef = useRef<number | null>(null);
+  useEffect(() => {
+    const users = messages.reduce(
+      (n, m) => n + (m.role === "user" ? 1 : 0),
+      0,
+    );
+    if (prevUsersRef.current === null) {
+      prevUsersRef.current = users;
+      return;
+    }
+    if (users > prevUsersRef.current && playingId) {
+      cancelTts();
+      setPlayingId(null);
+    }
+    prevUsersRef.current = users;
+  }, [messages, playingId, cancelTts]);
+
+  // ---------------------------------------------------------------------
   // ask_user question cards send answers through the normal chat
   // action — same contract as the composer and voice mode
   // (intent=send, payload {text, resources}) — so the answer is a
@@ -595,6 +663,14 @@ export function ChatView({
                 answered={answeredIds.has(m.id)}
                 onSendAnswer={sendAnswer}
                 onPrefill={prefillDraft}
+                onPlay={playMessage}
+                // Per-message, not the id: a play starting/stopping
+                // re-renders only the bubbles whose flag actually
+                // flipped — the rest keep their memo. (And identity
+                // stability of the callbacks above is what keeps
+                // session-status polls off this tree entirely.)
+                playing={playingId === m.id}
+                speakable={tts.supported}
               />
             ))}
           </div>

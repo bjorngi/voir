@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   nextNarrationChunk,
+  narrationChunks,
   stripMarkdown,
 } from "../app/lib/narration";
 
@@ -130,6 +131,30 @@ test("narration: heading + bullet list narrate naturally", () => {
   // One greedy chunk, but the heading gets an injected period so
   // the voice pauses: "Summary. Fixed the parser. Added tests."
   assert.deepEqual(r.out, ["Summary. Fixed the parser. Added tests."]);
+});
+
+test("narrationChunks: drains a whole message in order", () => {
+  const raw =
+    "First. Second:\n" +
+    "```js\ncode()\n```\n" +
+    "And the tail.";
+  assert.deepEqual(narrationChunks(raw, { final: true }), [
+    "First.",
+    "Second:",
+    "And the tail.",
+  ]);
+});
+
+test("narrationChunks: pure code and empty messages say nothing", () => {
+  assert.deepEqual(narrationChunks("```js\nconsole.log('silent');\n```", { final: true }), []);
+  assert.deepEqual(narrationChunks("", { final: true }), []);
+  assert.deepEqual(narrationChunks("   \n  ", { final: true }), []);
+});
+
+test("narrationChunks: a sentence without a period still speaks on final", () => {
+  assert.deepEqual(narrationChunks("just a fragment", { final: true }), [
+    "just a fragment",
+  ]);
 });
 
 test("narration: every result advances — no infinite loops", () => {

@@ -52,6 +52,60 @@ const MODELS = [
     _meta: { piAcp: { input: ["text"] } },
   },
 ];
+// One of each renderable rich-content block (docs/rich-content.md),
+// emitted as a single agent_message_chunk when a message mentions
+// "rich" — the module seam exercisable end to end.
+const RICH_DEMO = [
+  "Here's the deploy flow:\n\n```mermaid\nflowchart LR\n  A[ci green] --> B{canary?}\n  B -- yes --> C[ship 10%]\n  C --> D{healthy?}\n  D -- yes --> E[ship 100%]\n  D -- no --> F[rollback]\n```\n\n",
+  // 24 hourly points, two series.
+  '```voir-chart\n' + JSON.stringify({
+    title: "CPU & memory (last 6h)",
+    unit: "pct",
+    type: "line",
+    series: [
+      { label: "cpu", points: Array.from({ length: 24 }, (_, i) => [
+        Date.now() - (23 - i) * 900_000,
+        Math.round(20 + 30 * Math.abs(Math.sin(i / 3))),
+      ]) },
+      { label: "memory", points: Array.from({ length: 24 }, (_, i) => [
+        Date.now() - (23 - i) * 900_000,
+        Math.round(60 + 15 * Math.sin(i / 5)),
+      ]) },
+    ],
+  }) + '\n```\n\n',
+  "```csv\ntime,cpu,memory\n" +
+    Array.from({ length: 8 }, (_, i) => `18:${(i * 2).toString().padStart(2, "0")},${20 + i * 3},${60 + i}`).join("\n") +
+    "\n```\n\n",
+  '```voir-card\n' + JSON.stringify({
+    title: "hiet checkup 2026-11-04",
+    pill: { text: "healthy", tone: "good" },
+    rows: [
+      { k: "disk /", v: "42%", delta: "-2%", spark: [30, 33, 41, 44, 43, 42] },
+      { k: "memory pressure", v: "12%", delta: "0%", spark: [14, 12, 13, 12, 12, 12] },
+      { k: "failing pods", v: "0" },
+    ],
+    actions: [
+      { label: "Drill into disk", kind: "prefill", value: "Why did disk usage grow the last week?" },
+      { label: "Ack", kind: "send", value: "Checkup acknowledged." },
+    ],
+  }) + '\n```\n\n',
+  'Kitchen is 21.5° right now: `ha:sensor.kitchen_temperature` — say the word if you want the heater on.\n\n',
+  // Bespoke d3: agent-authored JavaScript, d3 preloaded in the
+  // sandbox (docs/rich-content.md — module 9).
+  "```d3\nconst data = [12, 30, 22, 40, 18];\n" +
+    'const svg = d3.select("#viz").append("svg")\n' +
+    '  .attr("width", innerWidth).attr("height", innerHeight - 8);\n' +
+    'const w = innerWidth / data.length;\n' +
+    'svg.selectAll("text").data(data).join("text")\n' +
+    '  .attr("x", (d, i) => i * w + 6).attr("y", innerHeight / 2)\n' +
+    '  .text((d) => "▮".repeat(Math.round(d / 5)))\n' +
+    '  .attr("fill", (d) => d > 35 ? "#f87171" : "#fbbf24");\n' +
+    'svg.append("text").attr("x", 6).attr("y", 14).attr("fill", "#737373")\n' +
+    '  .text("service latency p95 — 5 buckets");\n```\n\n',
+  // A miniature single-file app in the sandboxed frame.
+  '```html\n<!doctype html>\n<html><head><meta charset="utf-8"><style>\n  body{background:#17171a;color:#e5e5e5;font-family:monospace;padding:16px}\n  h1{font-size:14px;color:#fbbf24;margin:0 0 8px}\n  button{background:#262626;color:#e5e5e5;border:1px solid #444;padding:8px 12px;font-family:inherit}\n  #out{margin-top:8px;color:#a3a3a3}\n</style></head><body>\n  <h1>counter (sandboxed)</h1>\n  <button id="b">+1</button> <button id="r">reset</button>\n  <div id="out">n = 0</div>\n  <script>\n    let n = 0;\n    const out = document.getElementById("out");\n    document.getElementById("b").onclick = () => { n++; out.textContent = "n = " + n; };\n    document.getElementById("r").onclick = () => { n = 0; out.textContent = "n = 0"; };\n  <\/script>\n</body></html>\n```\n\n',
+].join("");
+
 const MODES = [
   { id: "off", name: "Off", description: "No thinking." },
   { id: "low", name: "Low", description: "A little thinking." },
@@ -637,10 +691,21 @@ const handlers = {
     }
 
     const reply = nextReply();
-    // Stream the reply in small chunks, ~30 chars at a time. The
-    // chat client coalesces chunks into a single message by
-    // checking the "streaming" flag on the previous message, so
-    // we don't need to thread a stable id through here.
+
+    // Rich-content demo (docs/rich-content.md): messages containing
+    // "rich" (or the /rich command) emit one of each renderable
+    // block — mermaid, voir-chart, csv table, voir-card with
+    // actions, an inline ha: chip, and html — so the module seam is
+    // exercisable end to end against the mock agent.
+    if (userText.toLowerCase().includes("rich")) {
+      emit({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: RICH_DEMO },
+      });
+      await sleep(30);
+      return { stopReason: "end_turn" };
+    }
+
     const chunkSize = 30;
     for (let i = 0; i < reply.length; i += chunkSize) {
       emit({

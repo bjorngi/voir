@@ -118,7 +118,15 @@ export async function launchAgent({
   const child = spawn(agentCmd, agentArgs, {
     cwd: folder,
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, ACP_FOLDER: folder, ...env },
+    env: {
+      ...process.env,
+      ACP_FOLDER: folder,
+      // Voir detection for env-gated agent extensions (pi's
+      // voir-rich nudge — docs/rich-content.md). Only sessions
+      // launched for voir carry it; terminal/print runs don't.
+      VOIR: "1",
+      ...env,
+    },
   });
   child.stderr.on("data", (b) => process.stderr.write(`[${tag}] ${b}`));
   // A write to an already-dead child must not crash the bridge

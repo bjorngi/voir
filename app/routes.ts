@@ -50,4 +50,6 @@ export default [
   route("api/share/:id", "routes/api.share.tsx", {
     id: "api-share-id",
   }),
+  // HA state proxy for inline `ha:` chips (docs/rich-content.md).
+  route("api/ha/state/:entity", "routes/api.ha.state.tsx"),
 ] satisfies RouteConfig;

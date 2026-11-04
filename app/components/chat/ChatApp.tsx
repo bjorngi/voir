@@ -217,7 +217,7 @@ function FoldersView({
   // the only manual cleanup act); the live state pill is the
   // "where is the ball" answer.
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="scrollbar-hide h-full overflow-y-auto">
       <WorkingOnSection
         rows={activeRows}
         onUnstar={onUnstar}
@@ -275,7 +275,7 @@ function SessionsView({
   };
 
   return (
-    <ul className="h-full overflow-y-auto">
+    <ul className="scrollbar-hide h-full overflow-y-auto">
       <li>
         <NewSessionAction folder={data.folder.path} />
       </li>

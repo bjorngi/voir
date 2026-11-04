@@ -22,6 +22,7 @@ import { Composer } from "~/components/Composer";
 import { ModelDrawer, usePendingSet } from "~/components/ModelDrawer";
 import { VoicePanel } from "./VoicePanel";
 import { modelVision } from "~/lib/chat-types";
+import { RichContext } from "~/lib/render/rich-context";
 
 type ChatData = Extract<ChatLoaderData, { k: "chat" }>;
 
@@ -564,13 +565,20 @@ export function ChatView({
     },
     [folder.path, initial.id],
   );
+  // Rich-card "prefill" actions reuse the voice tap-to-edit seam
+  // (injectText): a draft landing in the composer for review — the
+  // user edits and sends, never auto-sent.
+  const prefillDraft = useCallback((text: string) => {
+    setVoiceDraft({ text, seq: Date.now() });
+  }, []);
 
   return (
+    <RichContext.Provider value={{ folder: folder.path }}>
     <div className="flex h-full min-h-0 flex-col">
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollRef}
-          className="absolute inset-0 overflow-y-auto px-3 py-3 sm:px-4"
+          className="scrollbar-hide absolute inset-0 overflow-y-auto px-3 py-3 sm:px-4"
         >
           <div className="mx-auto flex max-w-3xl flex-col gap-3">
             {messages.map((m) => (
@@ -586,6 +594,7 @@ export function ChatView({
                 // re-rendering on every streamed chunk.
                 answered={answeredIds.has(m.id)}
                 onSendAnswer={sendAnswer}
+                onPrefill={prefillDraft}
               />
             ))}
           </div>
@@ -740,6 +749,7 @@ export function ChatView({
         </>
       )}
     </div>
+    </RichContext.Provider>
   );
 }
 

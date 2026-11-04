@@ -26,7 +26,7 @@ export function Picker({
         <div className="flex h-12 shrink-0 items-center border-b border-neutral-800 px-3">
           <span className="text-sm text-neutral-200">Menu</span>
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="scrollbar-hide flex-1 overflow-y-auto">
           <WorkingOnSection
             rows={active}
             onPick={onClose}

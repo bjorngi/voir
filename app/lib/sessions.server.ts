@@ -563,16 +563,19 @@ class SessionManager {
       session.replayDoneResolver = undefined;
       throw err;
     }
-    // Wait for the agent to finish replaying. The notification
-    // handler flips session.replaying off when it sees a non-chunk
-    // event (e.g. available_commands_update). Fall back to a short
-    // timeout so a misbehaving agent doesn't hang the loader.
+    // Wait for the agent to finish replaying. The end-signal events
+    // (see the boundary handler) resolve this once they arrive;
+    // the grace sleep covers any post-transcript straggler chunks
+    // the agent pushes after the response but before those events.
     await Promise.race([
       replayDone,
-      sleep(2000),
+      sleep(400),
     ]);
     session.replaying = false;
     session.replayDoneResolver = undefined;
+    // Belt for the race-timeout path (chunks straddling the flip);
+    // the boundary close normally already ran.
+    this.closeStreamingMessages(session);
     // The replay replaced the transcript from agent truth: busy
     // claimed by earlier inference is stale evidence — drop it on
     // the same principle resync applies. If the agent genuinely is
@@ -1129,6 +1132,12 @@ class SessionManager {
    * "agent is working" indicator, see ChatView.
    */
   private closeStreamingMessages(session: SessionState) {
+    // Close EVERY streaming text/thought, not just the newest: a
+    // one-chunk thought followed by streamed text leaves the
+    // thought BEHIND the (newer) text message — a backward scan
+    // that stops at the first text/thought would strand its flag
+    // stuck true forever (stale "thinking" cursors, and the
+    // settle gate deference applies to replayed copies).
     for (let i = session.messages.length - 1; i >= 0; i--) {
       const m = session.messages[i];
       if (m.kind === "text" || m.kind === "thought") {
@@ -1136,7 +1145,6 @@ class SessionManager {
           m.streaming = false;
           this.broadcast(session, m);
         }
-        return;
       }
     }
   }
@@ -1173,14 +1181,25 @@ class SessionManager {
     if (!session) return;
     const id = cryptoRandom();
 
-    // Replay boundary: any non-chunk event after a load signals
-    // that the agent has finished replaying history. Resolve the
-    // loader's wait so it can snapshot the full transcript.
-    if (session.replaying && !this.isChunkUpdate(update.sessionUpdate)) {
+    // Replay boundary. What may NOT end a replay: tool_call /
+    // tool_call_update / plan / metadata — pi-acp interleaves them
+    // WITHIN the replayed transcript (a tool call between text
+    // blocks); treating "any non-chunk event" as replay-done used
+    // to flip replaying off mid-replay, sharding every later
+    // chunk into its own streaming-forever message (the refresh
+    // regression). End signals are the post-transcript metadata:
+    // available_commands_update (both pi-acp and the mock send it
+    // after the replay) and the title push.
+    if (
+      session.replaying &&
+      (update.sessionUpdate === "available_commands_update" ||
+        update.sessionUpdate === "session_info_update")
+    ) {
       session.replaying = false;
       const resolve = session.replayDoneResolver;
       session.replayDoneResolver = undefined;
       resolve?.();
+      this.closeStreamingMessages(session);
     }
 
     // Session-scoped metadata updates from pi-acp: these update
@@ -1383,11 +1402,20 @@ class SessionManager {
     chunk: string,
   ) {
     let last = session.messages[session.messages.length - 1];
+    // Contiguity, not the streaming flag, is what makes one message:
+    // live chunks coalesce while streaming (the flag drives the
+    // cursor); REPLAYED chunks arrive piecewise with streaming
+    // already false — if they didn't coalesce, fences and code
+    // blocks in replayed transcripts would be shredded across
+    // per-chunk messages and no rich module could ever match them
+    // (the refresh/resync bug). During replay, contiguous
+    // same-kind chunks extend the same message regardless of the
+    // flag.
     if (
       !last ||
-      last.kind !== kind ||
       last.role !== role ||
-      !last.streaming
+      last.kind !== kind ||
+      (!last.streaming && !session.replaying)
     ) {
       const msg: ChatMessage = {
         id,

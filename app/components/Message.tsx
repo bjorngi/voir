@@ -1,4 +1,6 @@
-import { memo, useState, useMemo, useRef } from "react";
+import { memo, useState, useMemo, useRef, useEffect, Suspense, lazy } from "react";
+import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -6,6 +8,19 @@ import type {
   ToolCallContentBlock,
 } from "~/lib/chat-types";
 import { buildInlineDiff } from "~/lib/inline-diff";
+import {
+  matchFenced,
+  matchInline,
+  isImageRef,
+  isDeferred,
+  toolImageBlocks,
+  INLINE_MODULES,
+  type RenderProps,
+  type RenderActions,
+  type CarrierContext,
+  type BlockModule,
+} from "~/lib/render/registry";
+import { RichContext } from "~/lib/render/rich-context";
 import { useDebugPopoverDismiss } from "./DebugPopover";
 
 /**
@@ -28,6 +43,7 @@ export const MessageBubble = memo(function MessageBubble({
   msg,
   answered = false,
   onSendAnswer,
+  onPrefill,
 }: {
   msg: ChatMessage;
   /** True when a user message follows this one in the transcript —
@@ -37,8 +53,12 @@ export const MessageBubble = memo(function MessageBubble({
    * ChatView; the card formats the text, the send path is the normal
    * composer one (intent=send). */
   onSendAnswer?: (text: string) => void;
+  /** Drop text into the composer as an editable draft (rich-card
+   *  "prefill" actions — the voice tap-to-edit seam, re-used). */
+  onPrefill?: (text: string) => void;
 }) {
-  if (msg.kind === "text") return <Text m={msg} />;
+  if (msg.kind === "text")
+    return <Text m={msg} actions={richActions({ onSendAnswer, onPrefill })} />;
   if (msg.kind === "thought") return <Thought m={msg} />;
   if (msg.kind === "tool") {
     // The ask_user extension (sentinel mode) completes the tool call
@@ -58,7 +78,7 @@ export const MessageBubble = memo(function MessageBubble({
           />
         );
     }
-    return <Tool m={msg} />;
+    return <Tool m={msg} actions={richActions({ onSendAnswer, onPrefill })} />;
   }
   if (msg.kind === "plan") return <Plan m={msg} />;
   return null;
@@ -89,7 +109,7 @@ function DebugButton({ msg }: { msg: ChatMessage }) {
         ⋯
       </button>
       {open && (
-        <div className="absolute right-0 top-7 z-20 w-[min(90vw,28rem)] max-h-[70vh] overflow-auto border border-neutral-700 bg-neutral-950 p-3 text-[11px] shadow-2xl">
+        <div className="scrollbar-hide absolute right-0 top-7 z-20 max-h-[70vh] w-[min(90vw,28rem)] overflow-auto border border-neutral-700 bg-neutral-950 p-3 text-[11px] shadow-2xl">
           <div className="mb-2 flex items-center justify-between gap-2 border-b border-neutral-800 pb-2">
             <span className="font-mono text-[10px] uppercase tracking-widest text-neutral-500">
               Debug
@@ -118,7 +138,7 @@ function DebugButton({ msg }: { msg: ChatMessage }) {
               </>
             )}
           </dl>
-          <pre className="mt-3 overflow-auto border-t border-neutral-800 pt-2 font-mono text-[11px] leading-relaxed text-neutral-300">
+          <pre className="mt-3 border-t border-neutral-800 pt-2 font-mono text-[11px] leading-relaxed text-neutral-300">
             {json}
           </pre>
         </div>
@@ -128,10 +148,288 @@ function DebugButton({ msg }: { msg: ChatMessage }) {
 }
 
 // -----------------------------------------------------------------------
+// Rich-content registry seam — lazy caches, wrappers, chips. See
+// docs/rich-content.md. The registry itself (detection) is pure
+// (app/lib/render/registry.ts); this is the client rendering shim.
+// -----------------------------------------------------------------------
+
+/** Build the RenderActions for a message. send/prefill flow back
+ *  through ChatView's question-card and voice-composer seams. */
+const NOOP_ACTIONS: RenderActions = {
+  send: () => {},
+  prefill: () => {},
+  open: () => {},
+};
+function richActions(o: {
+  onSendAnswer?: (text: string) => void;
+  onPrefill?: (text: string) => void;
+}): RenderActions {
+  return {
+    send: (text) => o.onSendAnswer?.(text),
+    prefill: (text) => o.onPrefill?.(text),
+    open: (url) => window.open(url, "_blank", "noopener,noreferrer"),
+  };
+}
+
+// One lazy component per module id, cached module-scope: React.lazy
+// re-runs the factory per call, modules must be created once.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const lazyBlocks = new Map<string, React.ComponentType<any>>();
+function lazyBlock(m: BlockModule) {
+  let c = lazyBlocks.get(m.id);
+  if (!c) {
+    c = lazy(m.load) as React.ComponentType<any>;
+    lazyBlocks.set(m.id, c);
+  }
+  return c;
+}
+
+const lazyChips = new Map<string, React.ComponentType<any>>();
+function lazyChip(m: { id: string; load: () => Promise<{ default: React.ComponentType<any> }> }) {
+  let c = lazyChips.get(m.id);
+  if (!c) {
+    c = lazy(m.load) as React.ComponentType<any>;
+    lazyChips.set(m.id, c);
+  }
+  return c;
+}
+function chipById(id: string) {
+  const m = INLINE_MODULES.find((x) => x.id === id);
+  return m ? lazyChip(m) : null;
+}
+
+/**
+ * The fenced-block renderer: registry match → lazy module inside
+ * the trust wrapper (collapsible shell for heighted modules), or
+ * the plain code fallback — which is also the streaming frame for
+ * deferToSettled modules (JSON must never parse half a block).
+ */
+function RichBlock({
+  match,
+  lang,
+  body,
+  streaming,
+  actions,
+}: {
+  match: { module: BlockModule; data: unknown };
+  lang: string;
+  body: string;
+  streaming: boolean;
+  actions: RenderActions;
+}) {
+  const fallback = <PlainCode text={body} />;
+  // SSR must not execute module code: mermaid/uPlot/d3 are
+  const context: CarrierContext = {
+    carrier: { kind: "fenced", lang, body, streaming },
+  };
+  // browser-only at render time, and React.lazy's import would
+  // still be evaluated (and crash) on the server. Transcript SSR
+  // shows the plain code; the module swaps in on the client — the
+  // showcase shell (full-bleed breakout + ⤢) is pure markup and
+  // server-renders, so the affordance is there from first paint.
+  if (typeof window === "undefined")
+    return match.module.showcase ?
+      <RichShowcase
+        module={match.module}
+        data={match.data}
+        context={context}
+        actions={actions}
+        inline={fallback}
+      />
+      : fallback;
+  if (isDeferred(match, streaming)) return fallback;
+  const Component = lazyBlock(match.module);
+  const node = (
+    <Suspense fallback={fallback}>
+      <Component
+        data={match.data}
+        context={context}
+        actions={actions}
+        fallback={fallback}
+      />
+    </Suspense>
+  );
+  // Showcase modules (the graphics): full-bleed width + the ⤢
+  // maximize lightbox. Everything else renders as-is.
+  if (!match.module.showcase) return node;
+  return (
+    <RichShowcase
+      module={match.module}
+      data={match.data}
+      context={context}
+      actions={actions}
+      inline={node}
+    />
+  );
+}
+
+/**
+ * The showcase wrapper: the module breaks out of the transcript's
+ * centered column to the full scroll-container width (negative
+ * margins mirror the transcript's px-3 / sm:px-4), with a small ⏢
+ * pinned top-right that opens the maximize lightbox — the same
+ * component re-hosted in a fixed overlay near the viewport size
+ * (fixed-frame modules grow to 90vh via the `maximized` prop; the
+ * chart's ResizeObserver picks up the wider container on its own).
+ * The overlay closes on ⏡ / Escape / backdrop tap.
+ */
+function RichShowcase({
+  module,
+  data,
+  context,
+  actions,
+  inline,
+}: {
+  module: BlockModule;
+  data: unknown;
+  context: CarrierContext;
+  actions: RenderActions;
+  inline: ReactNode;
+}) {
+  const [maximized, setMaximized] = useState(false);
+  // Frame height lives HERE — one chrome bar per module (the
+  // modules no longer carry their own headers/buttons, so nothing
+  // overlaps): module id left; expand/collapse (fixed frames) + ⤢ right.
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (!maximized) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMaximized(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [maximized]);
+
+  const Component = lazyBlock(module);
+
+  return (
+    <div
+      className={
+        "relative " +
+        // break out of the transcript's centered column — the px-3
+        // transcript padding at mobile, px-4 at sm+.
+        "-mx-3 sm:-mx-4"
+      }
+      data-testid="rich-showcase"
+    >
+      <div className="flex items-center justify-between border-b border-neutral-800 bg-neutral-950 px-2.5 py-1">
+        <span className="font-mono text-[10px] uppercase tracking-widest text-neutral-600">
+          {module.id}
+        </span>
+        <div className="flex items-center gap-1">
+          {module.fixedFrame && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              aria-label={expanded ? "Collapse" : "Expand"}
+              title={expanded ? "Collapse" : "Expand"}
+              className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 active:text-neutral-200"
+            >
+              {expanded ? "collapse" : "expand"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setMaximized(true)}
+            aria-label="Maximize"
+            title="Maximize"
+            className="px-1 font-mono text-[12px] leading-none text-neutral-400 active:text-neutral-200"
+          >
+            ⤢
+          </button>
+        </div>
+      </div>
+      <div
+        style={
+          // Only iframe modules need a height clip (their content
+          // can't push its own height); everything else is natural.
+          module.fixedFrame
+            ? { height: expanded ? "70vh" : (module.frameHeight ?? 320) }
+            : undefined
+        }
+      >
+        {maximized ? (
+          <Suspense fallback={null}>
+            <Component
+              data={data}
+              context={context}
+              actions={actions}
+              maximized={true}
+            />
+          </Suspense>
+        ) : (
+          <Suspense fallback={null}>
+            <Component
+              data={data}
+              context={context}
+              actions={actions}
+              expanded={module.fixedFrame ? expanded : undefined}
+            />
+          </Suspense>
+        )}
+      </div>
+      {maximized
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-3 backdrop-blur-sm sm:p-6"
+              onClick={() => setMaximized(false)}
+              data-testid="rich-maximized"
+            >
+              <div
+                className="max-h-full w-full"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Suspense fallback={null}>
+                  <Component
+                    data={data}
+                    context={context}
+                    actions={actions}
+                    maximized={true}
+                  />
+                </Suspense>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMaximized(false)}
+                aria-label="Restore"
+                title="Restore"
+                className="absolute right-3 top-3 border border-neutral-700 bg-neutral-950/80 px-2.5 py-1 font-mono text-[12px] text-neutral-300 active:bg-neutral-800"
+              >
+                ⏡
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
+}
+
+/**
+ * The plain-code fallback (and the streaming frame). Wraps — no
+ * inner scroll (docs/rich-content.md: the page is the scroller).
+ */
+function PlainCode({ text }: { text: string }) {
+  return (
+    <pre className="my-2 bg-neutral-900 p-0 font-mono text-[13px]">
+      <code className="block whitespace-pre-wrap bg-neutral-900 p-3 font-mono text-[13px] text-neutral-200 [overflow-wrap:anywhere]">
+        {text}
+      </code>
+    </pre>
+  );
+}
+
+// -----------------------------------------------------------------------
 // Text — flat, left-aligned, markdown
 // -----------------------------------------------------------------------
 
-function Text({ m }: { m: ChatMessage & { kind: "text" } }) {
+function Text({
+  m,
+  actions,
+}: {
+  m: ChatMessage & { kind: "text" };
+  actions: RenderActions;
+}) {
   const isUser = m.role === "user";
   const images = isUser && m.images?.length ? m.images : undefined;
   return (
@@ -139,7 +437,7 @@ function Text({ m }: { m: ChatMessage & { kind: "text" } }) {
       <DebugButton msg={m} />
       {m.text && (
         <div className="text-[15px] leading-relaxed text-neutral-100">
-          <Markdown text={m.text} />
+          <Markdown text={m.text} streaming={!!m.streaming} actions={actions} />
         </div>
       )}
       {/* Attached image thumbnails (uploads.server.ts). The
@@ -193,7 +491,7 @@ function Thought({ m }: { m: ChatMessage & { kind: "thought" } }) {
       </button>
       {open && (
         <div className="mt-2 border-l border-neutral-800 pl-3 text-[13px] leading-relaxed text-neutral-400">
-          <Markdown text={m.text} />
+          <Markdown text={m.text} streaming={false} actions={NOOP_ACTIONS} />
         </div>
       )}
     </div>
@@ -431,7 +729,16 @@ function QuestionCard({
 // Tool — collapsible outline
 // -----------------------------------------------------------------------
 
-function Tool({ m }: { m: ChatMessage & { kind: "tool" } }) {
+function Tool({
+  m,
+  actions,
+}: {
+  m: ChatMessage & { kind: "tool" };
+  /** Present (unused in v1) — tool buttons/cards arrive on the card
+   *  module path, not the outline. Kept in the signature so the
+   *  bubble passes one actions shape everywhere. */
+  actions?: RenderActions;
+}) {
   // Edits (and any tool with a diff) are the point of the
   // transcript — they should be visible inline, not behind a
   // chevron. Other tool output stays collapsible.
@@ -447,6 +754,11 @@ function Tool({ m }: { m: ChatMessage & { kind: "tool" } }) {
     (c) => c.type !== "diff" && !(suppressTextStatus && c.type === "content"),
   );
   const hasNonDiff = nonDiffContent.length > 0;
+  // Image content blocks render as thumbnails right under the tool
+  // header — the `image` module's tool-carrier side (a tool that
+  // *returns* an image, e.g. a grafana render, shows it directly,
+  // not only inside the collapsed outline).
+  const images = toolImageBlocks(m.content);
   return (
     <div className="relative px-4 py-2">
       <DebugButton msg={m} />
@@ -479,6 +791,27 @@ function Tool({ m }: { m: ChatMessage & { kind: "tool" } }) {
               />
             );
           })}
+        </div>
+      )}
+      {images.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {images.map((img, i) => (
+            <a
+              key={i}
+              href={`data:${img.mimeType ?? "image/png"};base64,${img.data}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block h-32 w-32 overflow-hidden border border-neutral-700 bg-neutral-800 active:border-neutral-500"
+            >
+              <img
+                src={`data:${img.mimeType ?? "image/png"};base64,${img.data}`}
+                alt={img.name ?? "Tool image"}
+                loading="lazy"
+                className="h-full w-full object-cover"
+                data-testid="tool-image"
+              />
+            </a>
+          ))}
         </div>
       )}
       {hasNonDiff && open && (
@@ -534,7 +867,7 @@ function Diff({ path, oldText, newText }: { path: string; oldText: string; newTe
       <div className="bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-500">
         {path}
       </div>
-      <pre className="max-h-72 overflow-auto bg-neutral-950 p-2 font-mono text-[12px] leading-snug">
+      <pre className="bg-neutral-950 p-2 font-mono text-[12px] leading-snug">
         {lines.map((l, i) => (
           <div
             key={i}
@@ -600,8 +933,22 @@ function Plan({ m }: { m: ChatMessage & { kind: "plan" } }) {
  *   - GFM: tables, task lists, strikethrough, autolinks
  *   - Code fences are syntax-highlighted only minimally (monospace);
  *     we don't pull in shiki/highlight.js to keep the bundle small.
+ *   - Rich-content seams (docs/rich-content.md): a fenced block is
+ *     offered to the module registry before the plain-code render
+ *     (mermaid → diagram, ```html → sandboxed app, ```voir-chart →
+ *     chart, …); an inline code span is offered to the chip
+ *     registry (namespace prefixes like `ha:sensor.x`). No match →
+ *     exactly the plain rendering this had before the seam.
  */
-function Markdown({ text }: { text: string }) {
+function Markdown({
+  text,
+  streaming,
+  actions,
+}: {
+  text: string;
+  streaming: boolean;
+  actions: RenderActions;
+}) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -615,35 +962,71 @@ function Markdown({ text }: { text: string }) {
             className="text-blue-400 underline underline-offset-2 hover:text-blue-300"
           />
         ),
-        // Inline code: subtle background, not a pill
+        // Inline code: subtle background, not a pill. Namespace
+        // spans upgrade to chips (lazy; plain span until loaded —
+        // Suspense, not null: the prose must not blink). SSR keeps
+        // the plain span: React.lazy boundaries never resolve in
+        // streaming SSR — and module components are client-only —
+        // so the server must not attempt the upgrade at all.
         code: ({ node, className, children, ...props }) => {
           const isBlock = className?.startsWith("language-");
           if (isBlock) {
             return (
               <code
-                className="block overflow-auto whitespace-pre bg-neutral-900 p-3 font-mono text-[13px] text-neutral-200"
+                className="block whitespace-pre-wrap bg-neutral-900 p-3 font-mono text-[13px] text-neutral-200 [overflow-wrap:anywhere]"
                 {...props}
               >
                 {children}
               </code>
             );
           }
+          const token = typeof children === "string" ? children : String(children ?? "");
+          if (typeof window === "undefined") {
+            return <InlineCodeSpan text={token} {...(props as object)} />;
+          }
+          // Namespace modules first (ha:), then bare image refs —
+          // a backticked dashboard.png in prose becomes a chip.
+          const fileImage = !streaming ? isImageRef(token) : null;
+          const chip = fileImage
+            ? { module: { id: "file-image" }, ref: fileImage }
+            : matchInline(token);
+          if (chip && !streaming) {
+            const Chip = chipById(chip.module.id) ?? lazyChip(chip.module as never);
+            return (
+              <Suspense fallback={<InlineCodeSpan text={token} {...(props as object)} />}>
+                <Chip ref_={chip.ref} token={token} />
+              </Suspense>
+            );
+          }
+          return <InlineCodeSpan text={token} {...(props as object)} />;
+        },
+        // Fenced blocks: the rich-content seam. Extract the fence
+        // (language + body) from the hast node before rendering.
+        pre: ({ node, ...props }) => {
+          const fence = extractFenceFromNode(node);
+          if (fence) {
+            const match = matchFenced(fence.lang, fence.body, streaming);
+            if (match) {
+              return (
+                <RichBlock
+                  match={match}
+                  lang={fence.lang}
+                  body={fence.body}
+                  streaming={streaming}
+                  actions={actions}
+                />
+              );
+            }
+          }
+          // Plain code (and reserved/unknown languages): wraps,
+          // no inner scroll — the transcript page grows.
           return (
-            <code
-              className="rounded-none bg-neutral-800/80 px-1 py-0.5 font-mono text-[13px] text-neutral-200"
+            <pre
+              className="my-2 bg-neutral-900 p-0 font-mono text-[13px]"
               {...props}
-            >
-              {children}
-            </code>
+            />
           );
         },
-        // Code block: strip the wrapping <pre>'s default margin
-        pre: ({ node, ...props }) => (
-          <pre
-            className="my-2 overflow-auto bg-neutral-900 p-0 font-mono text-[13px]"
-            {...props}
-          />
-        ),
         // Headings: tighter than default
         h1: ({ node, ...props }) => (
           <h1
@@ -722,6 +1105,49 @@ function Markdown({ text }: { text: string }) {
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
+
+/** Inline code span — exactly what inline code looked like before
+ *  the chip seam existed. Also the chips' Suspense fallback. */
+function InlineCodeSpan({ text, ...props }: { text: string } & Record<string, unknown>) {
+  return (
+    <code
+      className="rounded-none bg-neutral-800/80 px-1 py-0.5 font-mono text-[13px] text-neutral-200"
+      {...props}
+    >
+      {text}
+    </code>
+  );
+}
+
+/**
+ * Extract (lang, body) from a fenced block's hast node —
+ * `pre > code[language-… ] > text`. Defensive: anything else
+ * (pre without a single code child, multiple children, empty
+ * body) returns null and the caller renders the pre untouched.
+ */
+function extractFenceFromNode(
+  node: unknown,
+): { lang: string; body: string } | null {
+  const n = node as {
+    children?: Array<{
+      tagName?: string;
+      properties?: { className?: unknown };
+      children?: Array<{ type?: string; value?: unknown }>;
+    }>;
+  } | undefined;
+  if (!n?.children || n.children.length !== 1) return null;
+  const code = n.children[0];
+  if (code.tagName !== "code") return null;
+  const cls = code.properties?.className;
+  const classes = Array.isArray(cls) ? cls : [];
+  const langTag = classes.find((c) => typeof c === "string" && c.startsWith("language-")) as string | undefined;
+  const body = (code.children ?? [])
+    .filter((c) => c.type === "text")
+    .map((c) => c.value as string)
+    .join("");
+  if (!langTag || typeof body !== "string") return null;
+  return { lang: langTag.slice("language-".length).toLowerCase().trim(), body };
+}
 
 function statusStyle(s: "pending" | "in_progress" | "completed" | "failed") {
   return s === "completed"

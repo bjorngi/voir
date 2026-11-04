@@ -19,10 +19,57 @@ import {
   initializeFaro,
   InternalLoggerLevel,
   faro,
+  type ExceptionEvent,
+  type LogEvent,
+  type Patterns,
+  type TransportItem,
 } from "@grafana/faro-web-sdk";
 import { TracingInstrumentation } from "@grafana/faro-web-tracing";
 
 const APP_NAME = "voir"; // one word — becomes the Loki label app_name
+
+// ── Faro must never log to faro ────────────────────────────────────────
+//
+// When a /collect POST fails (CORS rejection, collector down, network
+// error), the transport logs the failure and retries the batch. If those
+// errors could become faro events, every failed send would ship its own
+// failure report to the same dead endpoint → the next POST fails → the
+// next report → endless loop of failed requests and console noise. The
+// SDK keeps the collect URL out of tracing spans (FetchTransport's
+// getIgnoreUrls feeds the tracing instrumentation) and prints internal
+// errors to the *unpatched* console so the console instrumentation can't
+// recapture them — the two filters below make that guarantee explicit
+// instead of trusting SDK internals:
+//   • ignoreErrors — pushError drops matching exceptions at the API.
+//   • beforeSend — transport-item-level backstop: drops matching
+//     logs/exceptions (e.g. a console capture of faro's "Faro\n …"
+//     internal output) before they are ever sent.
+const FARO_SELF_REPORT_PATTERNS: Patterns = [
+  // FetchTransport v2 terminal-send messages
+  "Permanent delivery failure",
+  "Delivery retries exhausted",
+  // console.* captures of faro's internal logger output ("Faro\n …") —
+  // the console instrumentation prefixes captured errors like this
+  /^console\.(?:error|warn): Faro\b/,
+];
+
+function isFaroSelfReport(text: string): boolean {
+  return FARO_SELF_REPORT_PATTERNS.some((pattern) =>
+    typeof pattern === "string" ? text.includes(pattern) : pattern.test(text),
+  );
+}
+
+function dropFaroSelfReports(item: TransportItem): TransportItem | null {
+  if (item.type === "exception") {
+    const { type, value } = item.payload as ExceptionEvent;
+    return isFaroSelfReport(`${type}: ${value}`) ? null : item;
+  }
+  if (item.type === "log") {
+    const { message } = item.payload as LogEvent;
+    return isFaroSelfReport(message ?? "") ? null : item;
+  }
+  return item; // measurements/events/traces: never about the transport
+}
 
 export function initFaro() {
   if (!import.meta.env.VITE_FARO_ENABLED) return;
@@ -41,6 +88,10 @@ export function initFaro() {
     internalLoggerLevel: import.meta.env.DEV
       ? InternalLoggerLevel.WARN
       : InternalLoggerLevel.ERROR,
+    // never report faro's own transport failures back to faro — see
+    // FARO_SELF_REPORT_PATTERNS above
+    ignoreErrors: FARO_SELF_REPORT_PATTERNS,
+    beforeSend: dropFaroSelfReports,
     instrumentations: [
       ...getWebInstrumentations(), // errors, console, web-vitals, session, page
       new TracingInstrumentation(), // fetch/XHR spans → Tempo

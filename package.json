@@ -48,7 +48,7 @@
     "tsx": "^4.23.15",
     "uplot": "^1.6.32",
     "web-push": "^3.6.7",
-    "ws": "8.22.0"
+    "ws": "8.22.1"
   },
   "devDependencies": {
     "@react-router/dev": "^8.5.1",

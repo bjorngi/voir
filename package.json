@@ -52,7 +52,7 @@
   },
   "devDependencies": {
     "@react-router/dev": "^8.5.1",
-    "@tailwindcss/vite": "^4.3.3",
+    "@tailwindcss/vite": "^4.3.5",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
     "@types/react": "^19.0.0",

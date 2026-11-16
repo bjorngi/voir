@@ -37,7 +37,7 @@
     "@react-router/node": "^8.5.0",
     "@react-router/serve": "^8.5.0",
     "express": "^5.1.0",
-    "isbot": "^5.2.2",
+    "isbot": "^5.2.3",
     "mermaid": "^12.3.0",
     "prism-react-renderer": "^2.4.1",
     "react": "^19.0.0",

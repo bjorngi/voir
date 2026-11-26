@@ -1,8 +1,8 @@
 {
-  "stamp": "2026-11-26_20-27-31",
+  "stamp": "2026-11-26_21-11-10",
   "commit": {
-    "sha": "e402534",
-    "subject": "feat(pwa): true fullscreen where supported, and the insets it needs"
+    "sha": "e5cbf02",
+    "subject": "feat: timings to Grafana, keyboard dismissal, design skill, reusable gallery"
   },
   "devices": [
     {

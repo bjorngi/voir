@@ -23,6 +23,7 @@ import { ModelDrawer, usePendingSet } from "~/components/ModelDrawer";
 import { VoicePanel } from "./VoicePanel";
 import { PlaybackPanel } from "./PlaybackPanel";
 import { modelVision } from "~/lib/chat-types";
+import { MessageRail } from "./MessageRail";
 import { RichContext } from "~/lib/render/rich-context";
 
 type ChatData = Extract<ChatLoaderData, { k: "chat" }>;
@@ -724,12 +725,14 @@ export function ChatView({
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollRef}
-          className="scrollbar-hide absolute inset-0 overflow-y-auto px-3 py-3 sm:px-4"
+          /* pr-5 reserves the message rail's gutter so text never runs
+             under it (the rail is 12px, the padding was 12–16px). */
+          className="scrollbar-hide absolute inset-0 overflow-y-auto px-3 py-3 pr-5 sm:px-4 sm:pr-5"
         >
           {/* Reading measure grows with the viewport: 768 → 896 → 1024.
               Wider than that and lines get hard to track; narrower wastes
               a laptop screen. */}
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 sm:gap-3 lg:max-w-4xl 2xl:max-w-5xl">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 pr-2 sm:gap-3 sm:pr-3 lg:max-w-4xl 2xl:max-w-5xl">
             {rendered.map((m) => (
               <MessageBubble
                 key={m.id}
@@ -756,6 +759,8 @@ export function ChatView({
             ))}
           </div>
         </div>
+        {/* Minimap rail: scrollbar, overview and jump target in one. */}
+        <MessageRail scrollRef={scrollRef} messages={rendered} />
         {busy && <WorkingBorder />}
         {/* The stream state is shown by the shell's status dot (see
             TopBar) instead of a banner here: on a fold the banner sat

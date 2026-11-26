@@ -1,8 +1,8 @@
 {
-  "stamp": "2026-11-26_21-11-10",
+  "stamp": "2026-11-26_21-46-09",
   "commit": {
-    "sha": "e5cbf02",
-    "subject": "feat: timings to Grafana, keyboard dismissal, design skill, reusable gallery"
+    "sha": "3a8b60c",
+    "subject": "feat(chat): message rail — a textless minimap with jump targets"
   },
   "devices": [
     {

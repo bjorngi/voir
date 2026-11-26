@@ -37,7 +37,22 @@ type Mark = {
 
 /** A mark never gets thinner than this fraction of the rail (~2px), so a
  *  one-line thought is still visible and clickable. */
-const MIN_HEIGHT_PCT = 0.9;
+const MIN_HEIGHT_PCT = 1.1;
+
+/**
+ * Kinds that do not get a mark.
+ *
+ * Tool calls are the bulk of a long agent session — a turn can be twenty
+ * tool calls around three paragraphs of prose — and they are the thing you
+ * are least likely to hunt for by scrolling. Leaving them in turned the
+ * rail into a solid emerald column where the messages you actually wanted
+ * were single-pixel slivers. The map is of the *conversation*: your turns,
+ * the agent's replies, its thinking, its plans.
+ *
+ * (Tool calls keep their traces: filtering here is presentation only, the
+ * transcript and the deep links are unchanged.)
+ */
+const HIDDEN_KINDS: ReadonlySet<string> = new Set(["tool"]);
 /** Below this many messages the rail is noise, not a map. */
 const MIN_MESSAGES = 4;
 /** ...and below this much overflow it is pointless. */
@@ -48,8 +63,6 @@ function toneOf(m: ChatMessage): string {
   switch (m.kind) {
     case "thought":
       return "bg-neutral-700";
-    case "tool":
-      return "bg-emerald-400/70";
     case "plan":
       return "bg-violet-400/70";
     case "error":
@@ -89,6 +102,11 @@ export function MessageRail({
   const [band, setBand] = useState({ top: 0, height: 0 });
   const [activeId, setActiveId] = useState<string | null>(null);
   const raf = useRef<number | null>(null);
+  // Scrubbing: pressing the strip anywhere (not just on a mark) moves the
+  // viewport proportionally, and dragging keeps moving it. A press that
+  // never moves still lands on the mark under the finger as a click.
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const drag = useRef({ active: false, moved: false });
 
   /** Read the DOM once and turn message elements into rail geometry. */
   const measure = useCallback(() => {
@@ -104,6 +122,7 @@ export function MessageRail({
     const viewportTop = el.getBoundingClientRect().top;
     const next: Mark[] = [];
     for (const m of messages) {
+      if (HIDDEN_KINDS.has(m.kind)) continue;
       const node = document.getElementById(msgDomId(m.id));
       if (!node || !el.contains(node)) continue;
       const rect = node.getBoundingClientRect();
@@ -180,6 +199,19 @@ export function MessageRail({
     };
   }, [measureBand, scrollRef]);
 
+  /** Scroll so that `clientY` maps to the same fraction of the transcript. */
+  const scrollToFraction = useCallback(
+    (clientY: number) => {
+      const el = scrollRef.current;
+      const strip = stripRef.current;
+      if (!el || !strip) return;
+      const r = strip.getBoundingClientRect();
+      const f = Math.min(1, Math.max(0, (clientY - r.top) / r.height));
+      el.scrollTop = f * Math.max(0, el.scrollHeight - el.clientHeight);
+    },
+    [scrollRef],
+  );
+
   const jump = (mark: Mark) => {
     const el = scrollRef.current;
     if (!el) return;
@@ -200,16 +232,39 @@ export function MessageRail({
       aria-label="Messages"
       className="pointer-events-none absolute inset-y-0 left-1/2 z-10 w-full max-w-3xl -translate-x-1/2 select-none lg:max-w-4xl 2xl:max-w-5xl"
     >
-      <div className="pointer-events-auto absolute inset-y-0 right-0 w-3">
+      {/* Hit strip: 24px wide whatever the visual width, so a 3px slit is
+          still a comfortable tap target. The visual parts (track, band,
+          marks) are right-aligned and widen on hover or press — the rail
+          "slides out" under your finger. */}
+      <div
+        ref={stripRef}
+        className="group pointer-events-auto absolute inset-y-0 right-0 w-6 cursor-pointer"
+        onPointerDown={(e) => {
+          drag.current = { active: true, moved: false };
+          e.currentTarget.setPointerCapture(e.pointerId);
+          scrollToFraction(e.clientY);
+        }}
+        onPointerMove={(e) => {
+          if (!drag.current.active) return;
+          drag.current.moved = true;
+          scrollToFraction(e.clientY);
+        }}
+        onPointerUp={() => {
+          drag.current.active = false;
+        }}
+        onPointerCancel={() => {
+          drag.current.active = false;
+        }}
+      >
       {/* Faint track so the rail reads as a scrollbar and the marks as its
           contents, plus the viewport band: position and extent on screen. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 w-2 rounded-full bg-white/[0.03]"
+        className="pointer-events-none absolute inset-y-0 right-0 w-[3px] rounded-full bg-white/[0.06] transition-[width] duration-150 group-hover:w-3.5 group-active:w-3.5"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 rounded-sm border border-white/25 bg-white/[0.10]"
+        className="pointer-events-none absolute right-0 w-[3px] rounded-sm border border-white/30 bg-white/[0.14] transition-[width] duration-150 group-hover:w-3.5 group-active:w-3.5"
         style={{ top: `${band.top}%`, height: `${band.height}%` }}
       />
       {marks.map((mark, i) => {
@@ -218,17 +273,32 @@ export function MessageRail({
           <button
             key={mark.id}
             type="button"
-            onClick={() => jump(mark)}
+            onClick={() => {
+              // A press that turned into a drag already scrolled; do not
+              // also snap to the mark it started on.
+              if (drag.current.moved) {
+                drag.current.moved = false;
+                return;
+              }
+              jump(mark);
+            }}
             aria-label={`Jump to message ${i + 1} of ${marks.length}: ${mark.label}`}
             title={mark.label}
-            className={
-              "absolute right-0 rounded-sm transition-[width,opacity] hover:opacity-100 " +
-              mark.tone +
-              " " +
-              (active ? "w-3 opacity-100" : "w-2 opacity-70")
-            }
+            className="absolute right-0 w-6"
             style={{ top: `${mark.topPct}%`, height: `${mark.heightPct}%` }}
-          />
+          >
+            <span
+              aria-hidden
+              className={
+                "absolute inset-y-0 right-0 rounded-sm transition-[width,opacity] duration-150 " +
+                mark.tone +
+                " " +
+                (active
+                  ? "w-[3px] opacity-100 group-hover:w-3 group-active:w-3"
+                  : "w-[3px] opacity-60 group-hover:w-2.5 group-active:w-2.5")
+              }
+            />
+          </button>
         );
       })}
       </div>

@@ -97,12 +97,17 @@ disappears reads as a bug.
   list immediately; the server is the truth on the next snapshot.
 - **Status is one dot, one meaning.** Busy outranks connection state; idle and
   live are deliberately quiet. No banners over text.
-- **Navigation aids scale with the transcript.** The message rail (a
-  textless minimap: one colour-coded mark per message, viewport band, click
-  to jump) is the scrollbar for long conversations. Role colour, not content:
-  sky = you, grey = agent, dim = thinking, emerald = tools, violet = plans.
-  Align it to the reading measure, never the window edge, and hide it when
-  the transcript is shorter than ~1.2 screens.
+- **Navigation aids scale with the transcript.** The message rail is the
+  scrollbar for long conversations: a textless minimap, one colour-coded mark
+  per *message*, viewport band, tap to jump, drag to scrub. Role colour, not
+  content: sky = you, grey = agent, dim = thinking, violet = plans. **Tool
+  calls are filtered out** — they dominate a long agent session and turn the
+  map into a solid column where the messages you want are slivers.
+  Align it to the reading measure, never the window edge; hide it under ~1.2
+  screens of transcript. At rest it is a 3px slit inside a 24px hit strip
+  (a 3px target is unhittable); hovering or pressing slides it out to ~14px.
+  That pattern — thin visual, fat hit area, expands under the finger — is the
+  one to reuse for any precision control on a phone.
 - **Deep-linkable state lives in the URL** (`?view=changes`, `?focus=<msg id>`);
   ephemeral UI state (drawer, show-archived) stays in components.
 - **Transient layers never reserve space and never swallow taps**

@@ -129,6 +129,11 @@ body {
   /* Installed-PWA (viewport-fit=cover) keeps the layout below
      the iOS status-bar overlay. Zero in a normal browser tab. */
   padding-top: env(safe-area-inset-top);
+  /* The fold's inner pane is used in landscape, where a camera cutout
+     can sit at either end: keep the chrome and the text out from under
+     it. Zero on every device without insets. */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
   /* Don't let a rubber-band scroll or pull-to-refresh fight the
      chat's own scroll container on mobile. */
   overscroll-behavior: none;

@@ -1,14 +1,20 @@
 {
+  "id": "/",
   "name": "Voir",
   "short_name": "Voir",
   "description": "Chat interface for ACP-compatible coding agents.",
-  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": [
+    "fullscreen",
+    "standalone"
+  ],
+  "orientation": "any",
   "background_color": "#0b0d10",
   "theme_color": "#0b0d10",
   "lang": "en",
+  "prefer_related_applications": false,
   "share_target": {
     "action": "/share",
     "method": "POST",
@@ -19,7 +25,9 @@
       "files": [
         {
           "name": "images",
-          "accept": ["image/*"]
+          "accept": [
+            "image/*"
+          ]
         }
       ]
     }

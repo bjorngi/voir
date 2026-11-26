@@ -143,6 +143,7 @@ export function Composer({
   imageSupported = false,
   initialShared,
   currentModelVision,
+  drawer,
 }: {
   folder: string;
   sessionId: string;
@@ -210,6 +211,9 @@ export function Composer({
    * still matters to the human and models can be switched.
    */
   currentModelVision?: boolean;
+  /** Model/mode/fence drawer toggle. Lives beside the paperclip now:
+   *  it used to own a 28px row above the composer on every chat view. */
+  drawer?: { open: boolean; onToggle: () => void };
 }) {
   const fetcher = useFetcher<{ error?: string; ok?: boolean }>();
   // Draft key: per folder+session, so switching conversations keeps
@@ -347,13 +351,27 @@ export function Composer({
   // signal — it is true on both fold panes and false on the laptop.
   // Starts false so SSR and the first client render agree.
   const [coarse, setCoarse] = useState(false);
+  // Narrow composer: the textarea shares the row with three controls, so
+  // it is ~230px wide on the cover pane. `field-sizing: content` grows a
+  // textarea to fit its *placeholder*, and the long hint wrapped to three
+  // lines — the field sat at 85px empty. Short hint and an icon-only send
+  // below 560px keep the row at its content height instead.
+  const [compact, setCompact] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
-    const mq = window.matchMedia("(pointer: coarse)");
-    const apply = () => setCoarse(mq.matches);
+    const pointer = window.matchMedia("(pointer: coarse)");
+    const width = window.matchMedia("(max-width: 560px)");
+    const apply = () => {
+      setCoarse(pointer.matches);
+      setCompact(width.matches);
+    };
     apply();
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
+    pointer.addEventListener("change", apply);
+    width.addEventListener("change", apply);
+    return () => {
+      pointer.removeEventListener("change", apply);
+      width.removeEventListener("change", apply);
+    };
   }, []);
 
   // Speech-to-text dictation: hold the Send button, talk,
@@ -977,7 +995,13 @@ export function Composer({
         <div className="mb-2 px-2 text-xs text-rose-400">{fetcher.data.error}</div>
       )}
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+      {/* One row at every width. On a phone this used to stack the
+          textarea above a button row, which cost ~70px of viewport on
+          the fold's cover pane; the textarea keeps the space it needs
+          (it auto-grows with `field-sizing: content`) and the controls
+          sit beside it. items-end keeps SEND on the text baseline as the
+          field grows. */}
+      <div className="flex items-end gap-2">
         <textarea
           ref={ref}
           value={text}
@@ -1040,24 +1064,50 @@ export function Composer({
             }
           }}
           placeholder={
-            busy
-              ? `Type to queue… (@ attach, / commands, Esc to stop${coarse ? " — hold Send to dictate" : ""})`
-              : `Message…  (@ attach, / commands, ${coarse ? "hold Send to dictate" : "⌘+Enter to send"})`
+            compact
+              ? busy
+                ? "Type to queue…"
+                : "Message…"
+              : busy
+                ? `Type to queue… (@ attach, / commands, Esc to stop${coarse ? " — hold Send to dictate" : ""})`
+                : `Message…  (@ attach, / commands, ${coarse ? "hold Send to dictate" : "⌘+Enter to send"})`
           }
           className={
-            "scrollbar-hide composer-textarea flex-1 resize-none border border-neutral-800 bg-neutral-900 px-4 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-600 " +
+            "scrollbar-hide composer-textarea min-h-11 min-w-0 flex-1 resize-none border border-neutral-800 bg-neutral-900 px-4 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-600 " +
             // A ring rather than a border so the flash doesn't
             // fight the focus style — it shows while focused.
             (flash ? "ring-2 ring-amber-400/50" : "")
           }
         />
-        <div className="flex shrink-0 items-stretch gap-2 sm:contents">
+        <div className="flex shrink-0 items-stretch gap-2">
           {/* Image attach: paperclip opens the picker (camera or
               gallery on mobile). Gated on the agent's
               promptCapabilities.image — hidden entirely for
               agents that can't take images. The hidden input
               must stay outside the sm:contents row to avoid
               participating in the desktop layout. */}
+          {drawer && (
+            <button
+              type="button"
+              onClick={drawer.onToggle}
+              aria-expanded={drawer.open}
+              aria-label={
+                drawer.open
+                  ? "Close model, mode and fence"
+                  : "Open model, mode and fence"
+              }
+              title={
+                drawer.open
+                  ? "Close model, mode and fence"
+                  : "Model, mode and fence"
+              }
+              className="inline-flex h-11 w-9 shrink-0 items-center justify-center border border-neutral-700 bg-transparent text-neutral-400 transition-colors active:bg-white/10 hover:text-neutral-200"
+            >
+              <span aria-hidden="true" className="font-mono text-[13px] leading-none">
+                {drawer.open ? "▾" : "▴"}
+              </span>
+            </button>
+          )}
           {imageSupported && (
             <>
               <input
@@ -1101,7 +1151,7 @@ export function Composer({
             <button
               type="button"
               onClick={onCancel}
-              className="h-11 flex-1 border border-rose-400/60 bg-transparent px-3 text-xs font-semibold uppercase tracking-wider text-rose-300 transition-colors active:bg-rose-500/10 sm:flex-none sm:px-5 sm:text-sm"
+              className="h-11 shrink-0 border border-rose-400/60 bg-transparent px-3 text-xs font-semibold uppercase tracking-wider text-rose-300 transition-colors active:bg-rose-500/10 sm:px-5 sm:text-sm"
               title="Stop the current turn and clear queued messages (Esc)"
             >
               Stop
@@ -1144,7 +1194,17 @@ export function Composer({
                     : "border-neutral-700 bg-transparent text-neutral-600 active:bg-transparent")
           }
           >
-            {dictating ? (committed ? "Inserted ✓" : "Listening…") : busy ? "Queue" : "Send"}
+            {compact && !dictating ? (
+              <span aria-hidden="true" className="text-base leading-none">
+                ↑
+              </span>
+            ) : dictating ? (
+              committed ? "Inserted ✓" : "Listening…"
+            ) : busy ? (
+              "Queue"
+            ) : (
+              "Send"
+            )}
           </button>
         </div>
     </div>

@@ -75,7 +75,7 @@ export function WorkingOnSection({
     if (!empty) return null;
     return (
       <section aria-label="Working on" className="border-b border-neutral-900">
-        <h2 className="px-4 pb-1 pt-4 text-xs font-medium tracking-wide text-neutral-500">
+        <h2 className="px-4 pb-0.5 pt-2.5 text-[11px] font-medium tracking-wide text-neutral-500">
           Working on
         </h2>
         <p className="px-4 pb-4 text-sm text-neutral-600">{empty}</p>
@@ -84,7 +84,7 @@ export function WorkingOnSection({
   }
   return (
     <section aria-label="Working on" className="border-b border-neutral-900">
-      <h2 className="px-4 pb-1 pt-4 text-xs font-medium tracking-wide text-neutral-500">
+      <h2 className="px-4 pb-0.5 pt-2.5 text-[11px] font-medium tracking-wide text-neutral-500">
         Working on
       </h2>
       <ul className="pb-2">
@@ -94,7 +94,7 @@ export function WorkingOnSection({
               href={sessionUrl(row.folder, row.sessionId)}
               onClick={onPick}
               className={
-                "flex items-center gap-2 py-2.5 pl-4 text-sm active:bg-neutral-900 " +
+                "flex items-center gap-2 py-2 pl-4 text-sm active:bg-neutral-900 " +
                 (onUnstar ? "pr-10" : "pr-3")
               }
             >

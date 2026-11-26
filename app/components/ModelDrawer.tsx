@@ -140,37 +140,11 @@ export function ModelDrawer({
 
   return (
     <div>
-      {/* Chevron toggle. Sits OUTSIDE the clipped grid
-          panel so it's always visible — otherwise the user
-          has no discoverable affordance to open the drawer
-          in the first place. The arrow direction signals
-          the current state: up means "open me", down means
-          "close me".
-
-          The button has its own left and top borders (same
-          color as the panel's frame) so it reads as a
-          connected, slightly raised affordance rather than
-          a floating element. The bg matches the panel so
-          the border line is the only thing visually
-          separating them. */}
-      <div className="flex items-center justify-end">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          aria-label={
-            open ? "Close model, mode and fence" : "Open model, mode and fence"
-          }
-          title={
-            open ? "Close model, mode and fence" : "Open model, mode and fence"
-          }
-          className="inline-flex h-7 w-7 items-center justify-center border-l border-t border-r border-neutral-800 bg-neutral-950 text-base text-neutral-200 active:bg-neutral-800"
-        >
-          <span aria-hidden="true" className="font-mono leading-none">
-            {open ? "▾" : "▴"}
-          </span>
-        </button>
-      </div>
+      {/* The chevron that opens this panel lives in the composer now
+          (see Composer's `drawer` prop): it used to sit alone in a
+          right-aligned row above the composer, which cost 28px of
+          vertical space on every chat view — a whole row for one
+          button. The panel itself is unchanged. */}
       {/* The panel below the chevron. Wrapped in a single-
           row CSS grid whose track animates between 0fr
           (collapsed) and 1fr (natural content height) on

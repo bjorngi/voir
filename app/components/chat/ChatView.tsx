@@ -27,16 +27,27 @@ import { RichContext } from "~/lib/render/rich-context";
 
 type ChatData = Extract<ChatLoaderData, { k: "chat" }>;
 
+export type ConnState = {
+  state: "live" | "connecting" | "lost";
+  /** Why the stream is down, when the server said (fatal event). */
+  reason: string | null;
+};
+
 export function ChatView({
   data,
   tts,
   voiceActive,
   onVoiceActiveChange,
+  onConnection,
 }: {
   data: ChatData;
   tts: Tts;
   voiceActive: boolean;
   onVoiceActiveChange: (v: boolean) => void;
+  /** Reports the agent-stream state to the shell, whose status dot
+   *  shows it — this replaces the full-width "Connected — live" banner
+   *  that used to blanket the first line of the transcript. */
+  onConnection?: (state: ConnState) => void;
 }) {
   const { folder, session: initial } = data;
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
@@ -130,6 +141,16 @@ export function ChatView({
   // then unmounts. The transition detection is edge-based so
   // re-renders don't re-flash a settled stream.
   const [justConnected, setJustConnected] = useState(false);
+
+  // Mirror the stream state up to the shell. `everConnected` is read
+  // through the ref so the first-connect banner's "connecting" wording
+  // is not part of this contract: the dot only needs live/lost.
+  useEffect(() => {
+    onConnection?.({
+      state: connected ? "live" : everConnected.current ? "lost" : "connecting",
+      reason: connReason,
+    });
+  }, [connected, connReason, onConnection]);
   const prevConnected = useRef(false);
   useEffect(() => {
     if (connected === prevConnected.current) return;
@@ -182,6 +203,12 @@ export function ChatView({
     }
     return ids;
   }, [messages]);
+
+  // Adjacent thoughts collapse into one row: an agent that thinks twice
+  // in a row would otherwise spend two full rows on two one-line
+  // summaries. Purely presentational — `messages` stays the source of
+  // truth for ids, deep links and the answered-question pass.
+  const rendered = useMemo(() => mergeThoughts(messages), [messages]);
 
   // Live-update stream. The server replays the current transcript
   // as `snapshot` events, then `ready`, then live `message` events —
@@ -702,8 +729,8 @@ export function ChatView({
           {/* Reading measure grows with the viewport: 768 → 896 → 1024.
               Wider than that and lines get hard to track; narrower wastes
               a laptop screen. */}
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 lg:max-w-4xl 2xl:max-w-5xl">
-            {messages.map((m) => (
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 sm:gap-3 lg:max-w-4xl 2xl:max-w-5xl">
+            {rendered.map((m) => (
               <MessageBubble
                 key={m.id}
                 msg={m}
@@ -730,23 +757,10 @@ export function ChatView({
           </div>
         </div>
         {busy && <WorkingBorder />}
-        {/*
-          The connection state: a full-width bar floating over the
-          transcript's top edge — right under the tab bar (Chat /
-          Files / Changes), content centered. Color-coded: blue,
-          pulsing dot = first connect; amber, pulsing dot =
-          dropped and reconnecting (the server's reason when it
-          sent one); green flash = connected / recovered, fades
-          out. Absolutely positioned and pointer-transparent, so
-          the transcript and composer never shift when it appears
-          or leaves, and it can't swallow taps on what's under it.
-        */}
-        <ConnectionBanner
-          connected={connected}
-          everConnected={everConnected.current}
-          reason={connReason}
-          justConnected={justConnected}
-        />
+        {/* The stream state is shown by the shell's status dot (see
+            TopBar) instead of a banner here: on a fold the banner sat
+            over the first line of the transcript, and the information
+            is one bit — connected or not. */}
       </div>
       {/* Retro playback strip: while a ▶ narration runs, the voice
           settings (engine, voice, speed) sit above the composer —
@@ -859,6 +873,10 @@ export function ChatView({
           <Composer
             folder={folder.path}
             sessionId={initial.id}
+            drawer={{
+              open: drawerOpen,
+              onToggle: () => setDrawerOpen((v) => !v),
+            }}
             initialAttach={data.attach}
             imageSupported={data.imageSupported}
             currentModelVision={
@@ -988,81 +1006,27 @@ function findLastIndex(prev: ChatMessage[], pred: (m: ChatMessage) => boolean): 
 }
 
 // -----------------------------------------------------------------------
-// ConnectionBanner — full-width bar floating over the transcript's
-// top edge (right under the tab bar), content centered — the chat's
-// live connection state at a glance:
-//
-//   blue, pulsing dot    first connect — normal startup
-//   amber, pulsing dot   dropped — reconnecting (the server's
-//                        reason when it sent one, e.g. "Agent
-//                        offline — retrying…")
-//   green flash          connected / recovered — fades out
-//
-// Position is part of the contract: absolutely positioned inside
-// the transcript wrapper, pointer-events-none — the bar overlays
-// the content (backdrop blur keeps the first lines readable
-// under it), the layout never shifts when it appears or leaves,
-// and taps pass through to the content underneath. The client
-// keeps retrying with backoff (see the effect above), so amber
-// is reassurance, not an error to act on. Messages sent while
-// disconnected queue on the server as usual; the transcript
-// catches up on reconnect.
-// -----------------------------------------------------------------------
-
-function ConnectionBanner({
-  connected,
-  everConnected,
-  reason,
-  justConnected,
-}: {
-  connected: boolean;
-  everConnected: boolean;
-  reason: string | null;
-  justConnected: boolean;
-}) {
-  if (connected) {
-    if (!justConnected) return null;
-    return (
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
-        <div
-          role="status"
-          className="animate-banner-fade flex items-center justify-center gap-2 border-b border-emerald-400/25 bg-emerald-950/75 px-3 py-1 font-mono text-[11px] text-emerald-300 backdrop-blur-sm"
-        >
-          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
-          <span>Connected — live</span>
-        </div>
-      </div>
-    );
+/**
+ * Collapse runs of adjacent `thought` messages into one, keeping the
+ * newest id (deep links and the "playing" highlight target the last one)
+ * and joining the texts. Everything else passes through untouched.
+ */
+function mergeThoughts(messages: ChatMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const m of messages) {
+    const prev = out[out.length - 1];
+    if (m.kind === "thought" && prev?.kind === "thought") {
+      out[out.length - 1] = {
+        ...m,
+        text: [prev.text, m.text].filter(Boolean).join("\n\n"),
+      };
+      continue;
+    }
+    out.push(m);
   }
-  const firstTime = !everConnected;
-  return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-20">
-      <div
-        role="status"
-        aria-live="polite"
-        className={
-          "animate-banner-in flex items-center justify-center gap-2 border-b px-3 py-1 font-mono text-[11px] backdrop-blur-sm " +
-          (firstTime
-            ? "border-sky-400/25 bg-sky-950/75 text-sky-300"
-            : "border-amber-400/25 bg-amber-950/75 text-amber-300")
-        }
-      >
-        <span
-          className={
-            "animate-banner-dot inline-block h-1.5 w-1.5 shrink-0 rounded-full " +
-            (firstTime ? "bg-sky-400" : "bg-amber-400")
-          }
-        />
-        <span>
-          {reason ??
-            (firstTime ? "Connecting…" : "Connection lost — reconnecting…")}
-        </span>
-      </div>
-    </div>
-  );
+  return out;
 }
 
-// -----------------------------------------------------------------------
 // WorkingBorder — a 2px amber bar pinned to the bottom edge
 // of the messages area that sweeps left-to-right while the
 // agent is producing a turn. Single source of truth for

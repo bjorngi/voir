@@ -20,6 +20,7 @@ import { ChangesView } from "~/components/ChangesView";
 import { FileExplorer } from "~/components/FileExplorer";
 import { ChatView } from "./ChatView";
 import { ShowBarButton, TopBar, type ChangesBadge } from "./TopBar";
+import type { ConnState } from "./ChatView";
 
 export function ChatApp({ data }: { data: ChatLoaderData }) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -40,12 +41,33 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
   // is 40px out of ~400, and sometimes the conversation is what matters.
   // Persisted so the choice survives a reload (the PWA is reloaded
   // often); read post-mount so SSR and hydration agree.
+  // Agent-stream state, reported up by ChatView so the bar's status dot
+  // can carry it (it used to be a full-width banner over the transcript).
+  const [conn, setConn] = useState<ConnState | null>(null);
+
   const [barHidden, setBarHidden] = useState(false);
   useEffect(() => {
     try {
       setBarHidden(localStorage.getItem("voir:topbar-hidden") === "1");
     } catch {}
   }, []);
+  // The on-screen keyboard is the tightest space this app ever has: it
+  // can take half the short axis. While it is up, the bar steps aside
+  // (unless the user already hid it), and comes back on blur. Heuristic:
+  // the visual viewport losing >150px to the layout viewport means a
+  // keyboard, not a URL-bar collapse.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const check = () => {
+      setKeyboardOpen(window.innerHeight - vv.height > 150);
+    };
+    check();
+    vv.addEventListener("resize", check);
+    return () => vv.removeEventListener("resize", check);
+  }, []);
+
   const setBar = (hidden: boolean) => {
     setBarHidden(hidden);
     try {
@@ -133,13 +155,14 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
 
   return (
     <div className="relative flex h-full flex-col bg-neutral-950">
-      {barHidden ? (
+      {barHidden || keyboardOpen ? (
         <ShowBarButton onClick={() => setBar(false)} busy={busy} />
       ) : (
       <TopBar
         label={label}
         title={contextTitle}
         busy={busy}
+        conn={conn}
         home={data.k !== "folders"}
         menuOpen={pickerOpen}
         onMenu={() => setPickerOpen((v) => !v)}
@@ -196,6 +219,7 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         {data.k === "chat" && (
           <ChatView
             data={data}
+            onConnection={setConn}
             tts={tts}
             voiceActive={voiceActive}
             onVoiceActiveChange={setVoiceActive}

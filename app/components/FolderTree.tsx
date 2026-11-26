@@ -61,7 +61,7 @@ export function FolderTree({
         <a
           href={href}
           onClick={onPick}
-          className="block flex-1 truncate py-3 pr-2 text-sm text-neutral-200 active:bg-neutral-900"
+          className="block flex-1 truncate py-2.5 pr-2 text-sm text-neutral-200 active:bg-neutral-900"
         >
           <span className="font-mono">{shortPath(folder.path)}</span>
         </a>
@@ -102,7 +102,7 @@ export function FolderTree({
               <input type="hidden" name="intent" value="new" />
               <button
                 type="submit"
-                className="block w-full px-12 py-2 text-left text-sm font-medium text-blue-400 active:bg-neutral-800"
+                className="block w-full px-12 py-1.5 text-left text-sm font-medium text-blue-400 active:bg-neutral-800"
               >
                 + New chat
               </button>
@@ -118,7 +118,7 @@ export function FolderTree({
                 <a
                   href={sessionUrl(folder.path, s.id)}
                   onClick={onPick}
-                  className="block px-12 py-2 pr-10 text-sm text-neutral-300 active:bg-neutral-800"
+                  className="block px-12 py-1.5 pr-10 text-sm text-neutral-300 active:bg-neutral-800"
                 >
                   {s.status === "active" && (
                     <span

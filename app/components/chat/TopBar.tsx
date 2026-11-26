@@ -332,6 +332,7 @@ export function TopBar({
   label,
   title,
   busy,
+  conn,
   home,
   menuOpen,
   onMenu,
@@ -347,6 +348,10 @@ export function TopBar({
   /** Secondary line of context (folder path) — wide screens only. */
   title?: string;
   busy?: boolean;
+  /** Agent-stream state for the status dot. `undefined` on list views
+   *  (no stream), "connecting" before the first connect, "lost" while
+   *  reconnecting. */
+  conn?: { state: "live" | "connecting" | "lost"; reason: string | null } | null;
   /** Render the label as a link back to "/". */
   home?: boolean;
   menuOpen?: boolean;
@@ -516,8 +521,12 @@ export function TopBar({
     </>
   );
 
+  // Height: 48px is generous for a phone that also has to show a
+  // conversation. Every touch device gets 40px (measured: the fold pays
+  // 48 in portrait otherwise), and below 560px of viewport height — the
+  // landscape panes — it is 40 as well.
   return (
-    <header className="relative flex h-12 shrink-0 items-center gap-1.5 border-b border-neutral-800 px-2 [@media(max-height:560px)]:h-10">
+    <header className="relative flex h-12 shrink-0 items-center gap-1.5 border-b border-neutral-800 px-2 [@media(pointer:coarse)]:h-10 [@media(max-height:560px)]:h-10">
       {/* Navigation: the picker sheet. Stays on every width — it is also
           the folder switcher and session search. */}
       <IconButton
@@ -566,11 +575,30 @@ export function TopBar({
           Capped width so it never pushes the view switcher off; extra
           horizontal room belongs to the content, not the chrome. */}
       <div className="flex min-w-0 items-center gap-1.5">
+        {/* One dot, one meaning: a running turn outranks everything
+            (that is what the user is waiting on), then the stream
+            state — sky while first connecting, amber while
+            reconnecting. Idle-and-live is deliberately quiet. */}
         <span
           aria-hidden
+          title={
+            busy
+              ? "Working"
+              : conn?.state === "lost"
+                ? `Connection lost${conn.reason ? ` — ${conn.reason}` : " — reconnecting"}`
+                : conn?.state === "connecting"
+                  ? "Connecting…"
+                  : "Idle"
+          }
           className={
             "inline-block h-1.5 w-1.5 shrink-0 rounded-full " +
-            (busy ? "animate-pulse bg-amber-400" : "bg-neutral-700")
+            (busy
+              ? "animate-pulse bg-amber-400"
+              : conn?.state === "lost"
+                ? "animate-pulse bg-amber-500"
+                : conn?.state === "connecting"
+                  ? "animate-pulse bg-sky-400"
+                  : "bg-neutral-700")
           }
         />
         {home ? (

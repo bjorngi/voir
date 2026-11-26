@@ -33,8 +33,11 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const FOLDER_A = `${ROOT}/dev-data/project-a`;
-const FOLDER_B = `${ROOT}/dev-data/project-b`;
+// bin/dev.mjs copies the pristine samples into dev-data/worktrees/ and
+// builds the fixture repos there (the samples themselves stay clean), so
+// these are the paths the agent registers and the UI shows.
+const FOLDER_A = `${ROOT}/dev-data/worktrees/project-a`;
+const FOLDER_B = `${ROOT}/dev-data/worktrees/project-b`;
 
 // Mirrors app/lib/format.ts shortPath() — what the folder rows
 // actually render as their accessible names.
@@ -100,21 +103,33 @@ async function openSession(
 // helper is the one send path that exists on all three displays,
 // including the 4:3 inner pane and the laptop.
 async function sendAndWaitForTurn(page: Page, text: string) {
-  // The mock keeps its transcript across the three display projects
-  // (one shared stack, one shared agent process), so the same prompt
-  // would match twice in the second project and every text assertion
-  // would hit strict-mode ambiguity. Tagging the message with the
-  // project name keeps each run's text unique.
+  // The mock keeps its transcript across the display projects (one
+  // shared stack, one shared agent process), so the same prompt would
+  // match twice in a later project and every text assertion would hit
+  // strict-mode ambiguity. Tagging the message with the project name
+  // keeps each run's text unique.
   const tagged = `${text} [${test.info().project.name}]`;
-  await page.locator("textarea").first().fill(tagged);
-  await page.locator("textarea").first().press("Control+Enter");
+  const composer = page.locator("textarea").first();
+  const echo = page.getByText(`You said: "${tagged}"`);
 
-  // Echo = the message went out…
-  await expect(page.getByText(`You said: "${tagged}"`)).toBeVisible({
-    timeout: 20_000,
-  });
-  // …and the composer placeholder flipping back to the idle text is
-  // the "turn settled" proof (it reads "Type to queue…" while busy).
+  // Dev mode serves unbundled modules, so SSR markup is interactive
+  // well before React hydrates. A keystroke in that window fills the
+  // DOM but never reaches the composer's handler — and hydration then
+  // resets the value (the app is fine; the emulation is slow). Retry
+  // fill + send until the agent echoes the prompt, which is the proof
+  // that the whole path ran.
+  await expect(async () => {
+    if ((await echo.count()) > 0) return; // a previous attempt landed
+    if ((await composer.inputValue()) !== tagged) {
+      await composer.fill(tagged);
+      await expect(composer).toHaveValue(tagged, { timeout: 2_000 });
+    }
+    await composer.press("Control+Enter");
+    await expect(echo.first()).toBeVisible({ timeout: 5_000 });
+  }).toPass({ timeout: 40_000, intervals: [500, 1_000, 2_000] });
+
+  // The composer placeholder flipping back to the idle text is the
+  // "turn settled" proof (it reads "Type to queue…" while busy).
   // Asserting that instead of a canned reply keeps this independent
   // of which reply the mock rotates to next.
   await expect(

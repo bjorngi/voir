@@ -29,9 +29,10 @@
 // seed ids are variant-namespaced and not worth hardcoding), so the
 // walker works against any agent that has sessions in the folder.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { chromium, type Browser, type Page } from "@playwright/test";
 import { DISPLAYS, displaySummary } from "../test/displays";
 
@@ -39,22 +40,33 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ── args ────────────────────────────────────────────────────────────
 function parseArgs(argv: string[]) {
-  const opts: { url: string; out: string | null; only: string | null } = {
+  const opts: {
+    url: string;
+    out: string | null;
+    only: string | null;
+    publish: boolean;
+  } = {
     url: "http://127.0.0.1:9300",
     out: null,
     only: null,
+    publish: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--url") opts.url = argv[++i].replace(/\/$/, "");
     else if (a === "--out") opts.out = argv[++i];
     else if (a === "--only") opts.only = argv[++i];
+    else if (a === "--publish") opts.publish = true;
     else if (a === "-h" || a === "--help") {
-      console.log(`Usage: node bin/shots.mjs [--url <base>] [--out <dir>] [--only <substr>]
+      console.log(`Usage: node bin/shots.ts [--url <base>] [--out <dir>] [--only <substr>] [--publish]
 
 Captures every Voir view into screenshots + a contact sheet.
 Requires a running stack (npm run dev:mock). --only filters shots
-by name substring (e.g. --only chat).`);
+by name substring (e.g. --only chat).
+
+--publish writes the gallery to site/ (committed, WebP, stable file
+names) for the GitHub Pages site instead of a timestamped dir under
+shots/. That is what "npm run shots:publish" does.`);
       process.exit(0);
     } else {
       console.error(`unknown flag: ${a}`);
@@ -79,8 +91,29 @@ const stamp = new Date()
   .replace(/[:.]/g, "-")
   .replace("T", "_")
   .slice(0, 19);
-const OUT = resolve(opts.out ?? join(ROOT, "shots", stamp));
-mkdirSync(OUT, { recursive: true });
+// Two output layouts from one walker:
+//
+//   local    shots/<stamp>/index.html + shots/<stamp>/<file>.png
+//   publish  site/index.html          + site/shots/<file>.webp
+//
+// The published layout is what GitHub Pages serves (`site/` is the
+// artifact), so it uses stable paths across runs — the site is
+// committed, and the page always shows the newest capture. WebP because
+// these are UI screenshots living in git: same fidelity for a fraction
+// of the bytes.
+const IMG_EXT = opts.publish ? "webp" : "png";
+const IMG_DIR = opts.publish
+  ? resolve(ROOT, "site", "shots")
+  : resolve(opts.out ?? join(ROOT, "shots", stamp));
+const INDEX_DIR = opts.publish ? resolve(ROOT, "site") : IMG_DIR;
+const IMG_PREFIX = opts.publish ? "shots/" : "";
+if (opts.publish) {
+  // Replace the previous images wholesale so a removed view can't
+  // linger and the committed tree can't accumulate strays.
+  rmSync(IMG_DIR, { recursive: true, force: true });
+}
+mkdirSync(IMG_DIR, { recursive: true });
+mkdirSync(INDEX_DIR, { recursive: true });
 
 type Shot = { file: string; label: string; viewport: string; group: string };
 const shots: Shot[] = [];
@@ -102,8 +135,13 @@ async function shot(
   fullPage = true,
 ) {
   if (opts.only && !name.includes(opts.only) && !group.includes(opts.only)) return;
-  const file = `${viewport}-${name}.png`;
-  await page.screenshot({ path: join(OUT, file), fullPage, scale: "css" });
+  const file = `${viewport}-${name}.${IMG_EXT}`;
+  await page.screenshot({
+    path: join(IMG_DIR, file),
+    fullPage,
+    scale: "css",
+    ...(IMG_EXT === "webp" ? { type: "webp" as const, quality: 90 } : {}),
+  });
   shots.push({ file, label, viewport, group });
   console.log(`  ✓ ${viewport}/${name} — ${label}`);
 }
@@ -151,11 +189,13 @@ function pick(
 }
 
 // ── main ─────────────────────────────────────────────────────────────
-// The three review targets come from test/displays.ts — one source of
+// The five review targets come from test/displays.ts — one source of
 // truth shared with the e2e projects, so a gallery run and a test run
 // always look at the same panels.
 
-console.log(`[shots] target ${opts.url}\n[shots] output ${OUT}\n`);
+console.log(
+  `[shots] target ${opts.url}\n[shots] images ${IMG_DIR}\n[shots] page   ${join(INDEX_DIR, "index.html")}\n`,
+);
 
 // Discover the mock folders from the app itself — the paths are
 // absolute and depend on where the checkout lives.
@@ -298,6 +338,27 @@ for (const d of DISPLAYS) {
 await browser.close();
 
 // ── contact sheet ────────────────────────────────────────────────────
+// Provenance for the published page: which commit these shots show.
+// Falls back to "unknown" outside a checkout (CI tarballs, etc.).
+function gitHead(): { sha: string; subject: string } {
+  try {
+    const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const subject = execFileSync("git", ["log", "-1", "--pretty=%s"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return { sha, subject };
+  } catch {
+    return { sha: "unknown", subject: "" };
+  }
+}
+const head = gitHead();
+
 const byViewport = new Map<string, Shot[]>();
 for (const s of shots) {
   const list = byViewport.get(s.viewport) ?? [];
@@ -319,14 +380,20 @@ const displayTitle = (id: string) => {
 const sections = Array.from(byViewport.entries())
   .map(
     ([vp, list]) => `
-  <section>
+  <section data-title="${esc(displayTitle(vp))}">
     <h2>${esc(displayTitle(vp))}</h2>
     <div class="grid">
 ${list
   .map(
-    (s) => `      <figure class="${esc(s.group)}">
-        <a href="${esc(s.file)}" target="_blank"><img src="${esc(s.file)}" loading="lazy" alt="${esc(s.label)}"></a>
-        <figcaption><b>${esc(s.label)}</b><code>${esc(s.file)}</code></figcaption>
+    (s) => `      <figure class="${esc(s.group)} shot" data-src="${esc(IMG_PREFIX + s.file)}" data-label="${esc(s.label)}">
+        <button type="button" class="thumb" aria-label="Open ${esc(s.label)} full size">
+          <img src="${esc(IMG_PREFIX + s.file)}" loading="lazy" alt="${esc(s.label)}">
+        </button>
+        <figcaption>
+          <b>${esc(s.label)}</b>
+          <code>${esc(s.file)}</code>
+          <a href="${esc(IMG_PREFIX + s.file)}" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
       </figure>`,
   )
   .join("\n")}
@@ -368,25 +435,137 @@ const html = `<!doctype html>
   .chat figure img, .rich figure img, .tabs figure img { max-height: 620px;
     object-fit: cover; object-position: top; }
   a { color: inherit; }
+  header .hint { color: #525252; font-family: ui-monospace, monospace;
+    font-size: 11px; }
+  .thumb { display: block; width: 100%; padding: 0; border: 0; background: none;
+    cursor: zoom-in; }
+  .thumb:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+  figcaption a { color: #525252; text-decoration: none; margin-left: 6px; }
+  figcaption a:hover { color: #a3a3a3; }
+
+  /* Lightbox: fixed overlay, image contained to the viewport. */
+  #lb[hidden] { display: none; }
+  #lb { position: fixed; inset: 0; z-index: 50; display: flex;
+    flex-direction: column; background: #050505f2; backdrop-filter: blur(2px); }
+  #lb-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+    border-bottom: 1px solid #262626; font-size: 12px; color: #a3a3a3; }
+  #lb-bar .grow { flex: 1; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  #lb-bar b { color: #e5e5e5; font-weight: 500; }
+  #lb-count { font-family: ui-monospace, monospace; color: #737373; }
+  #lb-bar button { height: 32px; min-width: 44px; border: 1px solid #333;
+    background: #111; color: #e5e5e5; border-radius: 4px; cursor: pointer;
+    font-size: 15px; line-height: 1; }
+  #lb-bar button:hover { background: #1c1c1c; }
+  #lb-stage { flex: 1; min-height: 0; display: grid; place-items: center;
+    padding: 10px; cursor: zoom-out; }
+  #lb-img { max-width: 100%; max-height: 100%; object-fit: contain;
+    box-shadow: 0 10px 40px #000a; background: #0a0a0b; }
+  @media (max-width: 720px) { #lb-bar .kbd { display: none; } }
 </style>
 </head>
 <body>
 <header>
   <h1>Voir — visual review</h1>
   <code>${esc(stamp)}</code>
+  <code title="${esc(head.subject)}">@ ${esc(head.sha)}</code>
   <span class="count">${shots.length} shots · ${byViewport.size} displays</span>
+  <span class="hint">click a shot to browse · ← → · Esc</span>
 </header>
 ${sections}
+
+<div id="lb" hidden role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+  <div id="lb-bar">
+    <button type="button" id="lb-prev" aria-label="Previous shot">‹</button>
+    <button type="button" id="lb-next" aria-label="Next shot">›</button>
+    <span class="grow"><b id="lb-cap"></b></span>
+    <span id="lb-count"></span>
+    <span class="kbd" style="color:#525252">← → to browse · Esc to close</span>
+    <button type="button" id="lb-close" aria-label="Close">✕</button>
+  </div>
+  <div id="lb-stage"><img id="lb-img" alt=""></div>
+</div>
+<script>
+// Lightbox: click a shot to open, ←/→ (and swipe) to walk the whole
+// review, Esc to close. Order follows the page: every view of display 1,
+// then display 2, then 3 — so a redesign can be reviewed as one sequence.
+(() => {
+  const shots = Array.from(document.querySelectorAll("figure.shot"));
+  const lb = document.getElementById("lb");
+  const img = document.getElementById("lb-img");
+  const cap = document.getElementById("lb-cap");
+  const count = document.getElementById("lb-count");
+  let i = 0;
+
+  function show(n) {
+    i = (n + shots.length) % shots.length;
+    const fig = shots[i];
+    img.src = fig.dataset.src;
+    img.alt = fig.dataset.label || "";
+    cap.textContent = fig.dataset.label || fig.dataset.src;
+    const section = fig.closest("section");
+    count.textContent =
+      (i + 1) + " / " + shots.length +
+      (section ? " · " + (section.dataset.title || "") : "");
+    lb.hidden = false;
+    document.body.style.overflow = "hidden";
+    // Warm the neighbours so arrow-key browsing feels instant.
+    for (const d of [-1, 1]) {
+      const n2 = (i + d + shots.length) % shots.length;
+      const pre = new Image();
+      pre.src = shots[n2].dataset.src;
+    }
+  }
+  function close() {
+    lb.hidden = true;
+    document.body.style.overflow = "";
+    img.removeAttribute("src");
+  }
+
+  shots.forEach((fig, n) => {
+    const b = fig.querySelector("button.thumb");
+    if (b) b.addEventListener("click", () => show(n));
+  });
+  document.getElementById("lb-prev").onclick = () => show(i - 1);
+  document.getElementById("lb-next").onclick = () => show(i + 1);
+  document.getElementById("lb-close").onclick = close;
+  document.getElementById("lb-stage").onclick = close;
+  lb.addEventListener("click", (e) => { if (e.target === lb) close(); });
+
+  addEventListener("keydown", (e) => {
+    if (lb.hidden) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); show(i - 1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); show(i + 1); }
+    else if (e.key === "Home") { e.preventDefault(); show(0); }
+    else if (e.key === "End") { e.preventDefault(); show(shots.length - 1); }
+  });
+
+  // Touch: horizontal swipe moves through the sequence.
+  let x0 = null;
+  lb.addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; },
+    { passive: true });
+  lb.addEventListener("touchend", (e) => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0;
+    if (Math.abs(dx) > 45) show(i + (dx < 0 ? 1 : -1));
+    x0 = null;
+  }, { passive: true });
+})();
+</script>
 </body>
 </html>
 `;
 
-writeFileSync(join(OUT, "index.html"), html);
+writeFileSync(join(INDEX_DIR, "index.html"), html);
 writeFileSync(
-  join(OUT, "manifest.json"),
+  join(INDEX_DIR, "manifest.json"),
   JSON.stringify({ stamp, target: opts.url, shots }, null, 2) + "\n",
 );
 
 console.log(
-  `\n[shots] ${shots.length} screenshots → ${OUT}\n[shots] open ${join(OUT, "index.html")}\n[shots] or serve it: npm run shots:serve\n`,
+  `\n[shots] ${shots.length} screenshots → ${IMG_DIR}\n[shots] open ${join(INDEX_DIR, "index.html")}\n` +
+    (opts.publish
+      ? "[shots] published into site/ — commit it and Pages serves it\n"
+      : "[shots] or serve it: npm run shots:serve\n"),
 );

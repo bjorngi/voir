@@ -46,8 +46,10 @@
 import { execFileSync, spawn } from "node:child_process";
 import {
   appendFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -84,6 +86,15 @@ bin/dev.mjs for details.`);
 
 const opts = parseArgs(process.argv.slice(2));
 
+// ── generated worktrees ───────────────────────────────────────────────
+// The tracked sample worktrees under dev-data/ stay PRISTINE: they are
+// the source material, and a dev run must not dirty the checkout (the
+// fixture writes files, renames one, deletes one). Each run copies them
+// into dev-data/worktrees/ and builds the fixture git repo there, so
+// `git status` in the repo stays clean and --fresh can always rebuild
+// from the untracked source of truth.
+const WORKTREES = join(ROOT, "dev-data", "worktrees");
+
 // ── data dir isolation + status preseed ──────────────────────────────
 // Must happen before any child is spawned: children inherit env,
 // and the vite child's server modules read VOIR_DATA_DIR lazily.
@@ -95,6 +106,12 @@ process.env.VOIR_DATA_DIR = DATA_DIR;
 if (opts.fresh && existsSync(DATA_DIR)) {
   rmSync(DATA_DIR, { recursive: true, force: true });
   console.log(`[dev] --fresh: wiped ${DATA_DIR}`);
+}
+if (opts.fresh && existsSync(WORKTREES)) {
+  // Worktrees are derived from the pristine samples: a generator change
+  // must be picked up, and every test run must see the same fixture diff.
+  rmSync(WORKTREES, { recursive: true, force: true });
+  console.log(`[dev] --fresh: wiped ${WORKTREES}`);
 }
 mkdirSync(DATA_DIR, { recursive: true });
 
@@ -109,11 +126,22 @@ process.env.VITE_FARO_ENABLED = "";
 process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "";
 process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "";
 
+function materializeWorktree(fixture) {
+  const src = join(ROOT, "dev-data", fixture.dir);
+  const dst = join(WORKTREES, fixture.dir);
+  if (existsSync(dst)) return dst;
+  cpSync(src, dst, {
+    recursive: true,
+    filter: (path) => !path.split(/[\\/]/).includes(".git"),
+  });
+  return dst;
+}
+
 function preseedSessionStatus() {
   const file = join(DATA_DIR, "session-status.json");
   if (existsSync(file)) return; // runtime state survives restarts
-  const projectA = join(ROOT, "dev-data", "project-a");
-  const projectB = join(ROOT, "dev-data", "project-b");
+  const projectA = join(WORKTREES, "project-a");
+  const projectB = join(WORKTREES, "project-b");
   const at = Date.now();
   // Seed ids are variant-namespaced (see bin/mock-acp.mjs —
   // seed ids must stay unique across the two mock agents).
@@ -228,20 +256,24 @@ const MOCKS = [
     name: "mock-a",
     dir: "project-a",
     variant: "a",
-    // Fixture-git target files: one for a committed change on the
-    // demo branch, one left dirty (the "work in progress" the
-    // Changes tab is there to show).
+    // Fixture-git shape (see ensureFixtureGit): every change-status
+    // the diff view can render, at a size worth scrolling.
     code: "src/util.ts",
-    dirty: "NOTES.md",
+    entry: "src/main.ts",
+    task: "TASKS.md",
+    dirty: ["NOTES.md", "README.md"],
   },
   {
     name: "mock-b",
     dir: "project-b",
     variant: "b",
     code: "src/parse.ts",
-    dirty: "EXPERIMENT.md",
+    entry: "src/cli.ts",
+    task: "EXPERIMENT.md",
+    dirty: ["IDEAS.md", "README.md"],
   },
 ];
+
 
 /**
  * Make the sample worktree a real git repository with a base branch,
@@ -258,8 +290,117 @@ const MOCKS = [
  * single repository. Missing git (containers) is a soft failure —
  * the rest of the stack doesn't depend on it.
  */
+/** Names of the generated service modules (fixture content only). */
+const SERVICE_NAMES = [
+  "accounts",
+  "invoices",
+  "sessions",
+  "webhooks",
+  "reports",
+  "projects",
+  "labels",
+  "exports",
+];
+
+/** One plausible ~40-line module, deterministic per index. */
+function serviceSource(name, index) {
+  const T = name[0].toUpperCase() + name.slice(1);
+  const plural = `${name} records`;
+  return `// src/services/${name}.ts — sample worktree content (voir dev stack)
+import { logger } from "../util";
+
+export interface ${T}Record {
+  id: string;
+  name: string;
+  updatedAt: string;
+  /** Optimistic-concurrency token; bumped on every write. */
+  revision: number;
+}
+
+/** Normalise a ${name} record coming off the wire. */
+export function normalize${T}(input: Partial<${T}Record>): ${T}Record {
+  return {
+    id: input.id ?? "",
+    name: input.name ?? "(unnamed)",
+    updatedAt: input.updatedAt ?? new Date().toISOString(),
+    revision: input.revision ?? 0,
+  };
+}
+
+/** Write ${plural}, skipping malformed ones. Returns how many landed. */
+export async function sync${T}(records: ${T}Record[]): Promise<number> {
+  let written = 0;
+  for (const record of records) {
+    if (!record.id) {
+      logger.warn("skipping ${name} record without id", { index: ${index} });
+      continue;
+    }
+    await persist${T}(record);
+    written += 1;
+  }
+  logger.info("synced ${name}", { written, total: records.length });
+  return written;
+}
+
+async function persist${T}(record: ${T}Record): Promise<void> {
+  // …storage adapter goes here (fixture: intentionally a stub).
+  void record;
+}
+`;
+}
+
+/** A deliberately over-long line: the diff view's "WRAP OFF" exists
+ *  for exactly this, and a review at 416px needs to see it handled. */
+function allowlistSource() {
+  return `// src/services/allowlist.ts — sample worktree content (voir dev stack)
+export const ALLOWED_HOSTS = [
+  "api.internal.example", "auth.internal.example", "billing.internal.example",
+];
+
+/** One line, 240-odd characters: the kind of line that forces a
+ *  horizontal scroll in an unwrapped diff pane. */
+export const FALLBACK_CALLBACK_URL = "https://api.internal.example/v2/webhooks/deliver?token=00000000000000000000000000000000&retries=5&backoff=exponential&max_delay_ms=30000&signature=sha256";
+
+export function isAllowed(host: string): boolean {
+  return ALLOWED_HOSTS.includes(host);
+}
+`;
+}
+
+/** A file that exists on main and is deleted or renamed on the branch,
+ *  so the diff view has those statuses to render — without touching the
+ *  sample worktree's own files. */
+function legacySource(name) {
+  return `// src/legacy/${name}.ts — sample worktree content (voir dev stack)
+//
+// Superseded on feat/mock-work; kept on main so the diff can show a
+// ${name === "report-v1" ? "deletion" : "rename"} next to the rest of the change.
+
+export function ${name === "report-v1" ? "reportV1" : "formatLegacy"}(value: unknown): string {
+  return JSON.stringify(value, null, 2);
+}
+`;
+}
+
+/**
+ * Make the sample worktree a real git repository whose diff matches
+ * what the Changes view has to render in production: a base branch, a
+ * feature branch with many files touched, every change status
+ * (added / modified / deleted / renamed), hunks with context, one
+ * pathologically long line, and a dirty tree on top.
+ *
+ * A small diff makes the diff view easy to "review" and useless to
+ * review: file headers, hunk headers, wrapping and scrolling only
+ * show their real behaviour at volume. This fixture is ~13 files and
+ * a few hundred lines, generated deterministically so the gallery is
+ * comparable between runs.
+ *
+ * Repos are created at runtime and never committed (.gitignore has
+ * dev-data/<project>/.git). Missing git (containers) is a soft
+ * failure — the rest of the stack doesn't depend on it.
+ */
 function ensureFixtureGit(fixture) {
-  const dir = join(ROOT, "dev-data", fixture.dir);
+  const dir = join(WORKTREES, fixture.dir);
   if (existsSync(join(dir, ".git"))) return;
   const env = {
     ...process.env,
@@ -270,27 +411,99 @@ function ensureFixtureGit(fixture) {
   };
   const git = (...args) =>
     execFileSync("git", args, { cwd: dir, stdio: "ignore", env });
+  const write = (rel, body) => {
+    const abs = join(dir, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, body);
+  };
+  const append = (rel, body) => {
+    const abs = join(dir, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    appendFileSync(abs, body);
+  };
   try {
     git("init", "-q", "-b", "main");
+    // Two files that only exist so the branch can delete one and rename
+    // the other: every change status in the diff view, and the sample
+    // worktree's own files stay untouched.
+    write("src/legacy/report-v1.ts", legacySource("report-v1"));
+    write("src/legacy/format.ts", legacySource("format"));
     git("add", "-A");
     git("commit", "-q", "-m", "fixture: import sample worktree");
-    // A feature branch with one committed change…
     git("checkout", "-q", "-b", "feat/mock-work");
-    appendFileSync(
-      join(dir, fixture.code),
-      "\n// fixture: added on the mock work branch so the Changes tab\n" +
-        "// has a committed hunk to render next to the dirty one.\n" +
+
+    // — additions: 8 generated modules + one long-line file ——
+    SERVICE_NAMES.forEach((name, i) =>
+      write(`src/services/${name}.ts`, serviceSource(name, i)),
+    );
+    write("src/services/allowlist.ts", allowlistSource());
+
+    // — modifications with context: the existing files ——
+    append(
+      fixture.code,
+      "\n// feat/mock-work: the fixture's first committed hunk.\n" +
         "export function fixtureMarker(): string {\n  return \"mock work\";\n}\n",
     );
-    git("add", "-A");
-    git("commit", "-q", "-m", "feat: add fixture marker");
-    // …and an uncommitted edit beside it.
-    appendFileSync(
-      join(dir, fixture.dirty),
-      "\n<!-- fixture: uncommitted work in progress -->\n" +
-        "TODO: tighten this up before the demo (not committed on purpose).\n",
+    const original = readFileSync(join(dir, fixture.code), "utf8");
+    write(
+      fixture.code,
+      "// feat/mock-work: header added so the diff has a context hunk\n" +
+        "// above the function below.\n" +
+        original,
     );
-    console.log(`[dev] prepared git fixture in ${fixture.dir} (feat/mock-work + dirty tree)`);
+    append(
+      fixture.entry,
+      "\n// feat/mock-work: wire the generated services into the entry point.\n" +
+        'import { syncAccounts } from "./services/accounts";\n' +
+        'import { syncInvoices } from "./services/invoices";\n\n' +
+        "export async function bootstrap(): Promise<void> {\n" +
+        "  await syncAccounts([]);\n" +
+        "  await syncInvoices([]);\n}\n",
+    );
+    append(
+      fixture.task,
+      "\n## feat/mock-work\n\n" +
+        "- [x] scaffold the generated service modules\n" +
+        "- [x] wire two of them into the entry point\n" +
+        "- [ ] replace the storage stubs\n",
+    );
+
+    // — rename (git keeps history) and delete ——
+    git("mv", "src/legacy/format.ts", "src/legacy/format-v2.ts");
+    append(
+      "src/legacy/format-v2.ts",
+      "\n// Renamed on feat/mock-work: the diff renders this as a rename\n" +
+        "// with a small body change.\n",
+    );
+    git("rm", "-q", "src/legacy/report-v1.ts");
+
+    git("add", "-A");
+    git("commit", "-q", "-m", "feat: scaffold services, wire two, tidy docs");
+
+    // — dirty tree on top: modified files + untracked ones ——
+    for (const rel of fixture.dirty) {
+      append(
+        rel,
+        "\n<!-- uncommitted: work in progress, on purpose -->\n" +
+          "TODO: tighten this up before the demo.\n",
+      );
+    }
+    write(
+      "src/queue/pending.ts",
+      "// untracked: not staged yet — the diff view lists it separately.\n" +
+        "export const pending: string[] = [];\n",
+    );
+    write(
+      "src/queue/retry.ts",
+      "// untracked: exponential backoff helper, still being drafted.\n" +
+        "export function backoffMs(attempt: number): number {\n" +
+        "  return Math.min(30_000, 2 ** attempt * 250);\n}\n",
+    );
+
+    console.log(
+      `[dev] prepared git fixture in ${fixture.dir} ` +
+        `(${SERVICE_NAMES.length + 5} files vs main, feat/mock-work + dirty tree)`,
+    );
   } catch (err) {
     console.warn(
       `[dev] could not prepare git fixture in ${fixture.dir}: ${err.message} — Changes tab will be empty`,
@@ -299,9 +512,10 @@ function ensureFixtureGit(fixture) {
 }
 
 if (opts.mocks) {
+  for (const m of MOCKS) materializeWorktree(m);
   for (const m of MOCKS) ensureFixtureGit(m);
   for (const m of MOCKS) {
-    const cwd = join(ROOT, "dev-data", m.dir);
+    const cwd = join(WORKTREES, m.dir);
     start(
       m.name,
       process.execPath,
@@ -324,7 +538,7 @@ if (opts.mocks) {
   }
 
   // Wait until both folders are registered, then say so.
-  const wanted = MOCKS.map((m) => join(ROOT, "dev-data", m.dir));
+  const wanted = MOCKS.map((m) => join(WORKTREES, m.dir));
   await waitFor("mock agents to register", async () => {
     const folders = await apiFolders().catch(() => []);
     return wanted.every((p) => folders.some((f) => f.path === p));

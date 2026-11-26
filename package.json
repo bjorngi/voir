@@ -23,6 +23,7 @@
     "dev": "react-router dev",
     "dev:mock": "node bin/dev.mjs",
     "shots": "tsx bin/shots.ts",
+    "shots:publish": "tsx bin/shots.ts --publish",
     "shots:serve": "node bin/shots-serve.mjs",
     "mcp:browser": "npx @playwright/mcp@latest --port 8932 --browser chromium --user-data-dir $HOME/.cache/ms-playwright-mcp/voir",
     "start": "tsx bin/server.ts",

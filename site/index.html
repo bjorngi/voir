@@ -1,0 +1,782 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voir — visual review 2026-11-26_18-41-18</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0a0a0b; color: #e5e5e5;
+    font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
+  header { padding: 16px 20px; border-bottom: 1px solid #262626;
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header code { color: #737373; font-size: 12px; }
+  header .count { margin-left: auto; color: #a3a3a3; font-size: 12px;
+    font-family: ui-monospace, monospace; }
+  section { padding: 20px; }
+  h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: #737373; margin: 0 0 14px; font-weight: 500; }
+  .grid { display: grid; gap: 22px;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    align-items: start; }
+  figure { margin: 0; }
+  figure img { display: block; width: 100%; height: auto; border: 1px solid #262626;
+    border-radius: 6px; background: #111; }
+  figcaption { margin-top: 6px; font-size: 12px; color: #a3a3a3; }
+  figcaption b { display: block; color: #e5e5e5; font-weight: 500; }
+  figcaption code { color: #525252; font-family: ui-monospace, monospace;
+    font-size: 11px; }
+  .chat figure img, .rich figure img, .tabs figure img { max-height: 620px;
+    object-fit: cover; object-position: top; }
+  a { color: inherit; }
+  header .hint { color: #525252; font-family: ui-monospace, monospace;
+    font-size: 11px; }
+  .thumb { display: block; width: 100%; padding: 0; border: 0; background: none;
+    cursor: zoom-in; }
+  .thumb:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+  figcaption a { color: #525252; text-decoration: none; margin-left: 6px; }
+  figcaption a:hover { color: #a3a3a3; }
+
+  /* Lightbox: fixed overlay, image contained to the viewport. */
+  #lb[hidden] { display: none; }
+  #lb { position: fixed; inset: 0; z-index: 50; display: flex;
+    flex-direction: column; background: #050505f2; backdrop-filter: blur(2px); }
+  #lb-bar { display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+    border-bottom: 1px solid #262626; font-size: 12px; color: #a3a3a3; }
+  #lb-bar .grow { flex: 1; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  #lb-bar b { color: #e5e5e5; font-weight: 500; }
+  #lb-count { font-family: ui-monospace, monospace; color: #737373; }
+  #lb-bar button { height: 32px; min-width: 44px; border: 1px solid #333;
+    background: #111; color: #e5e5e5; border-radius: 4px; cursor: pointer;
+    font-size: 15px; line-height: 1; }
+  #lb-bar button:hover { background: #1c1c1c; }
+  #lb-stage { flex: 1; min-height: 0; display: grid; place-items: center;
+    padding: 10px; cursor: zoom-out; }
+  #lb-img { max-width: 100%; max-height: 100%; object-fit: contain;
+    box-shadow: 0 10px 40px #000a; background: #0a0a0b; }
+  @media (max-width: 720px) { #lb-bar .kbd { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Voir — visual review</h1>
+  <code>2026-11-26_18-41-18</code>
+  <code title="feat: mock dev stack + three-display review tooling">@ c6aa560</code>
+  <span class="count">60 shots · 5 displays</span>
+  <span class="hint">click a shot to browse · ← → · Esc</span>
+</header>
+
+  <section data-title="Fold 8 — cover (portrait) — 416 × 657 CSS · 5.5″ 10:16">
+    <h2>Fold 8 — cover (portrait) — 416 × 657 CSS · 5.5″ 10:16</h2>
+    <div class="grid">
+      <figure class="home shot" data-src="shots/fold-cover-portrait-home.webp" data-label="Home — Working on + folders">
+        <button type="button" class="thumb" aria-label="Open Home — Working on + folders full size">
+          <img src="shots/fold-cover-portrait-home.webp" loading="lazy" alt="Home — Working on + folders">
+        </button>
+        <figcaption>
+          <b>Home — Working on + folders</b>
+          <code>fold-cover-portrait-home.webp</code>
+          <a href="shots/fold-cover-portrait-home.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/fold-cover-portrait-folder-a.webp" data-label="Folder A — session list">
+        <button type="button" class="thumb" aria-label="Open Folder A — session list full size">
+          <img src="shots/fold-cover-portrait-folder-a.webp" loading="lazy" alt="Folder A — session list">
+        </button>
+        <figcaption>
+          <b>Folder A — session list</b>
+          <code>fold-cover-portrait-folder-a.webp</code>
+          <a href="shots/fold-cover-portrait-folder-a.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-cover-portrait-chat-bottom.webp" data-label="Chat — What is Voir? (bottom)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (bottom) full size">
+          <img src="shots/fold-cover-portrait-chat-bottom.webp" loading="lazy" alt="Chat — What is Voir? (bottom)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (bottom)</b>
+          <code>fold-cover-portrait-chat-bottom.webp</code>
+          <a href="shots/fold-cover-portrait-chat-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-cover-portrait-chat-top.webp" data-label="Chat — What is Voir? (top)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (top) full size">
+          <img src="shots/fold-cover-portrait-chat-top.webp" loading="lazy" alt="Chat — What is Voir? (top)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (top)</b>
+          <code>fold-cover-portrait-chat-top.webp</code>
+          <a href="shots/fold-cover-portrait-chat-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-cover-portrait-drawer.webp" data-label="Chat — model drawer open">
+        <button type="button" class="thumb" aria-label="Open Chat — model drawer open full size">
+          <img src="shots/fold-cover-portrait-drawer.webp" loading="lazy" alt="Chat — model drawer open">
+        </button>
+        <figcaption>
+          <b>Chat — model drawer open</b>
+          <code>fold-cover-portrait-drawer.webp</code>
+          <a href="shots/fold-cover-portrait-drawer.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="nav shot" data-src="shots/fold-cover-portrait-picker.webp" data-label="Global menu open">
+        <button type="button" class="thumb" aria-label="Open Global menu open full size">
+          <img src="shots/fold-cover-portrait-picker.webp" loading="lazy" alt="Global menu open">
+        </button>
+        <figcaption>
+          <b>Global menu open</b>
+          <code>fold-cover-portrait-picker.webp</code>
+          <a href="shots/fold-cover-portrait-picker.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/fold-cover-portrait-rich-top.webp" data-label="Rich content — mermaid/chart/table/card">
+        <button type="button" class="thumb" aria-label="Open Rich content — mermaid/chart/table/card full size">
+          <img src="shots/fold-cover-portrait-rich-top.webp" loading="lazy" alt="Rich content — mermaid/chart/table/card">
+        </button>
+        <figcaption>
+          <b>Rich content — mermaid/chart/table/card</b>
+          <code>fold-cover-portrait-rich-top.webp</code>
+          <a href="shots/fold-cover-portrait-rich-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/fold-cover-portrait-rich-bottom.webp" data-label="Rich content — d3 + sandboxed html">
+        <button type="button" class="thumb" aria-label="Open Rich content — d3 + sandboxed html full size">
+          <img src="shots/fold-cover-portrait-rich-bottom.webp" loading="lazy" alt="Rich content — d3 + sandboxed html">
+        </button>
+        <figcaption>
+          <b>Rich content — d3 + sandboxed html</b>
+          <code>fold-cover-portrait-rich-bottom.webp</code>
+          <a href="shots/fold-cover-portrait-rich-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/fold-cover-portrait-files.webp" data-label="Files tab">
+        <button type="button" class="thumb" aria-label="Open Files tab full size">
+          <img src="shots/fold-cover-portrait-files.webp" loading="lazy" alt="Files tab">
+        </button>
+        <figcaption>
+          <b>Files tab</b>
+          <code>fold-cover-portrait-files.webp</code>
+          <a href="shots/fold-cover-portrait-files.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/fold-cover-portrait-changes.webp" data-label="Changes tab (diff)">
+        <button type="button" class="thumb" aria-label="Open Changes tab (diff) full size">
+          <img src="shots/fold-cover-portrait-changes.webp" loading="lazy" alt="Changes tab (diff)">
+        </button>
+        <figcaption>
+          <b>Changes tab (diff)</b>
+          <code>fold-cover-portrait-changes.webp</code>
+          <a href="shots/fold-cover-portrait-changes.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/fold-cover-portrait-folder-b.webp" data-label="Folder B — session list">
+        <button type="button" class="thumb" aria-label="Open Folder B — session list full size">
+          <img src="shots/fold-cover-portrait-folder-b.webp" loading="lazy" alt="Folder B — session list">
+        </button>
+        <figcaption>
+          <b>Folder B — session list</b>
+          <code>fold-cover-portrait-folder-b.webp</code>
+          <a href="shots/fold-cover-portrait-folder-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-cover-portrait-chat-b.webp" data-label="Chat (folder B) — Parse CSV edge cases">
+        <button type="button" class="thumb" aria-label="Open Chat (folder B) — Parse CSV edge cases full size">
+          <img src="shots/fold-cover-portrait-chat-b.webp" loading="lazy" alt="Chat (folder B) — Parse CSV edge cases">
+        </button>
+        <figcaption>
+          <b>Chat (folder B) — Parse CSV edge cases</b>
+          <code>fold-cover-portrait-chat-b.webp</code>
+          <a href="shots/fold-cover-portrait-chat-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section data-title="Fold 8 — cover (landscape) — 657 × 416 CSS · 5.5″ 16:10 held sideways">
+    <h2>Fold 8 — cover (landscape) — 657 × 416 CSS · 5.5″ 16:10 held sideways</h2>
+    <div class="grid">
+      <figure class="home shot" data-src="shots/fold-cover-landscape-home.webp" data-label="Home — Working on + folders">
+        <button type="button" class="thumb" aria-label="Open Home — Working on + folders full size">
+          <img src="shots/fold-cover-landscape-home.webp" loading="lazy" alt="Home — Working on + folders">
+        </button>
+        <figcaption>
+          <b>Home — Working on + folders</b>
+          <code>fold-cover-landscape-home.webp</code>
+          <a href="shots/fold-cover-landscape-home.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/fold-cover-landscape-folder-a.webp" data-label="Folder A — session list">
+        <button type="button" class="thumb" aria-label="Open Folder A — session list full size">
+          <img src="shots/fold-cover-landscape-folder-a.webp" loading="lazy" alt="Folder A — session list">
+        </button>
+        <figcaption>
+          <b>Folder A — session list</b>
+          <code>fold-cover-landscape-folder-a.webp</code>
+          <a href="shots/fold-cover-landscape-folder-a.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-cover-landscape-chat-bottom.webp" data-label="Chat — What is Voir? (bottom)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (bottom) full size">
+          <img src="shots/fold-cover-landscape-chat-bottom.webp" loading="lazy" alt="Chat — What is Voir? (bottom)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (bottom)</b>
+          <code>fold-cover-landscape-chat-bottom.webp</code>
+          <a href="shots/fold-cover-landscape-chat-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-cover-landscape-chat-top.webp" data-label="Chat — What is Voir? (top)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (top) full size">
+          <img src="shots/fold-cover-landscape-chat-top.webp" loading="lazy" alt="Chat — What is Voir? (top)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (top)</b>
+          <code>fold-cover-landscape-chat-top.webp</code>
+          <a href="shots/fold-cover-landscape-chat-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-cover-landscape-drawer.webp" data-label="Chat — model drawer open">
+        <button type="button" class="thumb" aria-label="Open Chat — model drawer open full size">
+          <img src="shots/fold-cover-landscape-drawer.webp" loading="lazy" alt="Chat — model drawer open">
+        </button>
+        <figcaption>
+          <b>Chat — model drawer open</b>
+          <code>fold-cover-landscape-drawer.webp</code>
+          <a href="shots/fold-cover-landscape-drawer.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="nav shot" data-src="shots/fold-cover-landscape-picker.webp" data-label="Global menu open">
+        <button type="button" class="thumb" aria-label="Open Global menu open full size">
+          <img src="shots/fold-cover-landscape-picker.webp" loading="lazy" alt="Global menu open">
+        </button>
+        <figcaption>
+          <b>Global menu open</b>
+          <code>fold-cover-landscape-picker.webp</code>
+          <a href="shots/fold-cover-landscape-picker.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/fold-cover-landscape-rich-top.webp" data-label="Rich content — mermaid/chart/table/card">
+        <button type="button" class="thumb" aria-label="Open Rich content — mermaid/chart/table/card full size">
+          <img src="shots/fold-cover-landscape-rich-top.webp" loading="lazy" alt="Rich content — mermaid/chart/table/card">
+        </button>
+        <figcaption>
+          <b>Rich content — mermaid/chart/table/card</b>
+          <code>fold-cover-landscape-rich-top.webp</code>
+          <a href="shots/fold-cover-landscape-rich-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/fold-cover-landscape-rich-bottom.webp" data-label="Rich content — d3 + sandboxed html">
+        <button type="button" class="thumb" aria-label="Open Rich content — d3 + sandboxed html full size">
+          <img src="shots/fold-cover-landscape-rich-bottom.webp" loading="lazy" alt="Rich content — d3 + sandboxed html">
+        </button>
+        <figcaption>
+          <b>Rich content — d3 + sandboxed html</b>
+          <code>fold-cover-landscape-rich-bottom.webp</code>
+          <a href="shots/fold-cover-landscape-rich-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/fold-cover-landscape-files.webp" data-label="Files tab">
+        <button type="button" class="thumb" aria-label="Open Files tab full size">
+          <img src="shots/fold-cover-landscape-files.webp" loading="lazy" alt="Files tab">
+        </button>
+        <figcaption>
+          <b>Files tab</b>
+          <code>fold-cover-landscape-files.webp</code>
+          <a href="shots/fold-cover-landscape-files.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/fold-cover-landscape-changes.webp" data-label="Changes tab (diff)">
+        <button type="button" class="thumb" aria-label="Open Changes tab (diff) full size">
+          <img src="shots/fold-cover-landscape-changes.webp" loading="lazy" alt="Changes tab (diff)">
+        </button>
+        <figcaption>
+          <b>Changes tab (diff)</b>
+          <code>fold-cover-landscape-changes.webp</code>
+          <a href="shots/fold-cover-landscape-changes.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/fold-cover-landscape-folder-b.webp" data-label="Folder B — session list">
+        <button type="button" class="thumb" aria-label="Open Folder B — session list full size">
+          <img src="shots/fold-cover-landscape-folder-b.webp" loading="lazy" alt="Folder B — session list">
+        </button>
+        <figcaption>
+          <b>Folder B — session list</b>
+          <code>fold-cover-landscape-folder-b.webp</code>
+          <a href="shots/fold-cover-landscape-folder-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-cover-landscape-chat-b.webp" data-label="Chat (folder B) — Parse CSV edge cases">
+        <button type="button" class="thumb" aria-label="Open Chat (folder B) — Parse CSV edge cases full size">
+          <img src="shots/fold-cover-landscape-chat-b.webp" loading="lazy" alt="Chat (folder B) — Parse CSV edge cases">
+        </button>
+        <figcaption>
+          <b>Chat (folder B) — Parse CSV edge cases</b>
+          <code>fold-cover-landscape-chat-b.webp</code>
+          <a href="shots/fold-cover-landscape-chat-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section data-title="Fold 8 — inner (portrait) — 609 × 816 CSS · 7.6″ 3:4 upright">
+    <h2>Fold 8 — inner (portrait) — 609 × 816 CSS · 7.6″ 3:4 upright</h2>
+    <div class="grid">
+      <figure class="home shot" data-src="shots/fold-inner-portrait-home.webp" data-label="Home — Working on + folders">
+        <button type="button" class="thumb" aria-label="Open Home — Working on + folders full size">
+          <img src="shots/fold-inner-portrait-home.webp" loading="lazy" alt="Home — Working on + folders">
+        </button>
+        <figcaption>
+          <b>Home — Working on + folders</b>
+          <code>fold-inner-portrait-home.webp</code>
+          <a href="shots/fold-inner-portrait-home.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/fold-inner-portrait-folder-a.webp" data-label="Folder A — session list">
+        <button type="button" class="thumb" aria-label="Open Folder A — session list full size">
+          <img src="shots/fold-inner-portrait-folder-a.webp" loading="lazy" alt="Folder A — session list">
+        </button>
+        <figcaption>
+          <b>Folder A — session list</b>
+          <code>fold-inner-portrait-folder-a.webp</code>
+          <a href="shots/fold-inner-portrait-folder-a.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-inner-portrait-chat-bottom.webp" data-label="Chat — What is Voir? (bottom)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (bottom) full size">
+          <img src="shots/fold-inner-portrait-chat-bottom.webp" loading="lazy" alt="Chat — What is Voir? (bottom)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (bottom)</b>
+          <code>fold-inner-portrait-chat-bottom.webp</code>
+          <a href="shots/fold-inner-portrait-chat-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-inner-portrait-chat-top.webp" data-label="Chat — What is Voir? (top)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (top) full size">
+          <img src="shots/fold-inner-portrait-chat-top.webp" loading="lazy" alt="Chat — What is Voir? (top)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (top)</b>
+          <code>fold-inner-portrait-chat-top.webp</code>
+          <a href="shots/fold-inner-portrait-chat-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-inner-portrait-drawer.webp" data-label="Chat — model drawer open">
+        <button type="button" class="thumb" aria-label="Open Chat — model drawer open full size">
+          <img src="shots/fold-inner-portrait-drawer.webp" loading="lazy" alt="Chat — model drawer open">
+        </button>
+        <figcaption>
+          <b>Chat — model drawer open</b>
+          <code>fold-inner-portrait-drawer.webp</code>
+          <a href="shots/fold-inner-portrait-drawer.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="nav shot" data-src="shots/fold-inner-portrait-picker.webp" data-label="Global menu open">
+        <button type="button" class="thumb" aria-label="Open Global menu open full size">
+          <img src="shots/fold-inner-portrait-picker.webp" loading="lazy" alt="Global menu open">
+        </button>
+        <figcaption>
+          <b>Global menu open</b>
+          <code>fold-inner-portrait-picker.webp</code>
+          <a href="shots/fold-inner-portrait-picker.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/fold-inner-portrait-rich-top.webp" data-label="Rich content — mermaid/chart/table/card">
+        <button type="button" class="thumb" aria-label="Open Rich content — mermaid/chart/table/card full size">
+          <img src="shots/fold-inner-portrait-rich-top.webp" loading="lazy" alt="Rich content — mermaid/chart/table/card">
+        </button>
+        <figcaption>
+          <b>Rich content — mermaid/chart/table/card</b>
+          <code>fold-inner-portrait-rich-top.webp</code>
+          <a href="shots/fold-inner-portrait-rich-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/fold-inner-portrait-rich-bottom.webp" data-label="Rich content — d3 + sandboxed html">
+        <button type="button" class="thumb" aria-label="Open Rich content — d3 + sandboxed html full size">
+          <img src="shots/fold-inner-portrait-rich-bottom.webp" loading="lazy" alt="Rich content — d3 + sandboxed html">
+        </button>
+        <figcaption>
+          <b>Rich content — d3 + sandboxed html</b>
+          <code>fold-inner-portrait-rich-bottom.webp</code>
+          <a href="shots/fold-inner-portrait-rich-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/fold-inner-portrait-files.webp" data-label="Files tab">
+        <button type="button" class="thumb" aria-label="Open Files tab full size">
+          <img src="shots/fold-inner-portrait-files.webp" loading="lazy" alt="Files tab">
+        </button>
+        <figcaption>
+          <b>Files tab</b>
+          <code>fold-inner-portrait-files.webp</code>
+          <a href="shots/fold-inner-portrait-files.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/fold-inner-portrait-changes.webp" data-label="Changes tab (diff)">
+        <button type="button" class="thumb" aria-label="Open Changes tab (diff) full size">
+          <img src="shots/fold-inner-portrait-changes.webp" loading="lazy" alt="Changes tab (diff)">
+        </button>
+        <figcaption>
+          <b>Changes tab (diff)</b>
+          <code>fold-inner-portrait-changes.webp</code>
+          <a href="shots/fold-inner-portrait-changes.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/fold-inner-portrait-folder-b.webp" data-label="Folder B — session list">
+        <button type="button" class="thumb" aria-label="Open Folder B — session list full size">
+          <img src="shots/fold-inner-portrait-folder-b.webp" loading="lazy" alt="Folder B — session list">
+        </button>
+        <figcaption>
+          <b>Folder B — session list</b>
+          <code>fold-inner-portrait-folder-b.webp</code>
+          <a href="shots/fold-inner-portrait-folder-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-inner-portrait-chat-b.webp" data-label="Chat (folder B) — Parse CSV edge cases">
+        <button type="button" class="thumb" aria-label="Open Chat (folder B) — Parse CSV edge cases full size">
+          <img src="shots/fold-inner-portrait-chat-b.webp" loading="lazy" alt="Chat (folder B) — Parse CSV edge cases">
+        </button>
+        <figcaption>
+          <b>Chat (folder B) — Parse CSV edge cases</b>
+          <code>fold-inner-portrait-chat-b.webp</code>
+          <a href="shots/fold-inner-portrait-chat-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section data-title="Fold 8 — inner (landscape) — 816 × 609 CSS · 7.6″ 4:3 opened flat">
+    <h2>Fold 8 — inner (landscape) — 816 × 609 CSS · 7.6″ 4:3 opened flat</h2>
+    <div class="grid">
+      <figure class="home shot" data-src="shots/fold-inner-landscape-home.webp" data-label="Home — Working on + folders">
+        <button type="button" class="thumb" aria-label="Open Home — Working on + folders full size">
+          <img src="shots/fold-inner-landscape-home.webp" loading="lazy" alt="Home — Working on + folders">
+        </button>
+        <figcaption>
+          <b>Home — Working on + folders</b>
+          <code>fold-inner-landscape-home.webp</code>
+          <a href="shots/fold-inner-landscape-home.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/fold-inner-landscape-folder-a.webp" data-label="Folder A — session list">
+        <button type="button" class="thumb" aria-label="Open Folder A — session list full size">
+          <img src="shots/fold-inner-landscape-folder-a.webp" loading="lazy" alt="Folder A — session list">
+        </button>
+        <figcaption>
+          <b>Folder A — session list</b>
+          <code>fold-inner-landscape-folder-a.webp</code>
+          <a href="shots/fold-inner-landscape-folder-a.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-inner-landscape-chat-bottom.webp" data-label="Chat — What is Voir? (bottom)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (bottom) full size">
+          <img src="shots/fold-inner-landscape-chat-bottom.webp" loading="lazy" alt="Chat — What is Voir? (bottom)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (bottom)</b>
+          <code>fold-inner-landscape-chat-bottom.webp</code>
+          <a href="shots/fold-inner-landscape-chat-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-inner-landscape-chat-top.webp" data-label="Chat — What is Voir? (top)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (top) full size">
+          <img src="shots/fold-inner-landscape-chat-top.webp" loading="lazy" alt="Chat — What is Voir? (top)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (top)</b>
+          <code>fold-inner-landscape-chat-top.webp</code>
+          <a href="shots/fold-inner-landscape-chat-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-inner-landscape-drawer.webp" data-label="Chat — model drawer open">
+        <button type="button" class="thumb" aria-label="Open Chat — model drawer open full size">
+          <img src="shots/fold-inner-landscape-drawer.webp" loading="lazy" alt="Chat — model drawer open">
+        </button>
+        <figcaption>
+          <b>Chat — model drawer open</b>
+          <code>fold-inner-landscape-drawer.webp</code>
+          <a href="shots/fold-inner-landscape-drawer.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="nav shot" data-src="shots/fold-inner-landscape-picker.webp" data-label="Global menu open">
+        <button type="button" class="thumb" aria-label="Open Global menu open full size">
+          <img src="shots/fold-inner-landscape-picker.webp" loading="lazy" alt="Global menu open">
+        </button>
+        <figcaption>
+          <b>Global menu open</b>
+          <code>fold-inner-landscape-picker.webp</code>
+          <a href="shots/fold-inner-landscape-picker.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/fold-inner-landscape-rich-top.webp" data-label="Rich content — mermaid/chart/table/card">
+        <button type="button" class="thumb" aria-label="Open Rich content — mermaid/chart/table/card full size">
+          <img src="shots/fold-inner-landscape-rich-top.webp" loading="lazy" alt="Rich content — mermaid/chart/table/card">
+        </button>
+        <figcaption>
+          <b>Rich content — mermaid/chart/table/card</b>
+          <code>fold-inner-landscape-rich-top.webp</code>
+          <a href="shots/fold-inner-landscape-rich-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/fold-inner-landscape-rich-bottom.webp" data-label="Rich content — d3 + sandboxed html">
+        <button type="button" class="thumb" aria-label="Open Rich content — d3 + sandboxed html full size">
+          <img src="shots/fold-inner-landscape-rich-bottom.webp" loading="lazy" alt="Rich content — d3 + sandboxed html">
+        </button>
+        <figcaption>
+          <b>Rich content — d3 + sandboxed html</b>
+          <code>fold-inner-landscape-rich-bottom.webp</code>
+          <a href="shots/fold-inner-landscape-rich-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/fold-inner-landscape-files.webp" data-label="Files tab">
+        <button type="button" class="thumb" aria-label="Open Files tab full size">
+          <img src="shots/fold-inner-landscape-files.webp" loading="lazy" alt="Files tab">
+        </button>
+        <figcaption>
+          <b>Files tab</b>
+          <code>fold-inner-landscape-files.webp</code>
+          <a href="shots/fold-inner-landscape-files.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/fold-inner-landscape-changes.webp" data-label="Changes tab (diff)">
+        <button type="button" class="thumb" aria-label="Open Changes tab (diff) full size">
+          <img src="shots/fold-inner-landscape-changes.webp" loading="lazy" alt="Changes tab (diff)">
+        </button>
+        <figcaption>
+          <b>Changes tab (diff)</b>
+          <code>fold-inner-landscape-changes.webp</code>
+          <a href="shots/fold-inner-landscape-changes.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/fold-inner-landscape-folder-b.webp" data-label="Folder B — session list">
+        <button type="button" class="thumb" aria-label="Open Folder B — session list full size">
+          <img src="shots/fold-inner-landscape-folder-b.webp" loading="lazy" alt="Folder B — session list">
+        </button>
+        <figcaption>
+          <b>Folder B — session list</b>
+          <code>fold-inner-landscape-folder-b.webp</code>
+          <a href="shots/fold-inner-landscape-folder-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/fold-inner-landscape-chat-b.webp" data-label="Chat (folder B) — Parse CSV edge cases">
+        <button type="button" class="thumb" aria-label="Open Chat (folder B) — Parse CSV edge cases full size">
+          <img src="shots/fold-inner-landscape-chat-b.webp" loading="lazy" alt="Chat (folder B) — Parse CSV edge cases">
+        </button>
+        <figcaption>
+          <b>Chat (folder B) — Parse CSV edge cases</b>
+          <code>fold-inner-landscape-chat-b.webp</code>
+          <a href="shots/fold-inner-landscape-chat-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section data-title="Laptop — MacBook Pro 16" — 1728 × 1117 CSS · 16.2″ 16:10, default scaled">
+    <h2>Laptop — MacBook Pro 16" — 1728 × 1117 CSS · 16.2″ 16:10, default scaled</h2>
+    <div class="grid">
+      <figure class="home shot" data-src="shots/laptop-home.webp" data-label="Home — Working on + folders">
+        <button type="button" class="thumb" aria-label="Open Home — Working on + folders full size">
+          <img src="shots/laptop-home.webp" loading="lazy" alt="Home — Working on + folders">
+        </button>
+        <figcaption>
+          <b>Home — Working on + folders</b>
+          <code>laptop-home.webp</code>
+          <a href="shots/laptop-home.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/laptop-folder-a.webp" data-label="Folder A — session list">
+        <button type="button" class="thumb" aria-label="Open Folder A — session list full size">
+          <img src="shots/laptop-folder-a.webp" loading="lazy" alt="Folder A — session list">
+        </button>
+        <figcaption>
+          <b>Folder A — session list</b>
+          <code>laptop-folder-a.webp</code>
+          <a href="shots/laptop-folder-a.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/laptop-chat-bottom.webp" data-label="Chat — What is Voir? (bottom)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (bottom) full size">
+          <img src="shots/laptop-chat-bottom.webp" loading="lazy" alt="Chat — What is Voir? (bottom)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (bottom)</b>
+          <code>laptop-chat-bottom.webp</code>
+          <a href="shots/laptop-chat-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/laptop-chat-top.webp" data-label="Chat — What is Voir? (top)">
+        <button type="button" class="thumb" aria-label="Open Chat — What is Voir? (top) full size">
+          <img src="shots/laptop-chat-top.webp" loading="lazy" alt="Chat — What is Voir? (top)">
+        </button>
+        <figcaption>
+          <b>Chat — What is Voir? (top)</b>
+          <code>laptop-chat-top.webp</code>
+          <a href="shots/laptop-chat-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/laptop-drawer.webp" data-label="Chat — model drawer open">
+        <button type="button" class="thumb" aria-label="Open Chat — model drawer open full size">
+          <img src="shots/laptop-drawer.webp" loading="lazy" alt="Chat — model drawer open">
+        </button>
+        <figcaption>
+          <b>Chat — model drawer open</b>
+          <code>laptop-drawer.webp</code>
+          <a href="shots/laptop-drawer.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="nav shot" data-src="shots/laptop-picker.webp" data-label="Global menu open">
+        <button type="button" class="thumb" aria-label="Open Global menu open full size">
+          <img src="shots/laptop-picker.webp" loading="lazy" alt="Global menu open">
+        </button>
+        <figcaption>
+          <b>Global menu open</b>
+          <code>laptop-picker.webp</code>
+          <a href="shots/laptop-picker.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/laptop-rich-top.webp" data-label="Rich content — mermaid/chart/table/card">
+        <button type="button" class="thumb" aria-label="Open Rich content — mermaid/chart/table/card full size">
+          <img src="shots/laptop-rich-top.webp" loading="lazy" alt="Rich content — mermaid/chart/table/card">
+        </button>
+        <figcaption>
+          <b>Rich content — mermaid/chart/table/card</b>
+          <code>laptop-rich-top.webp</code>
+          <a href="shots/laptop-rich-top.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="rich shot" data-src="shots/laptop-rich-bottom.webp" data-label="Rich content — d3 + sandboxed html">
+        <button type="button" class="thumb" aria-label="Open Rich content — d3 + sandboxed html full size">
+          <img src="shots/laptop-rich-bottom.webp" loading="lazy" alt="Rich content — d3 + sandboxed html">
+        </button>
+        <figcaption>
+          <b>Rich content — d3 + sandboxed html</b>
+          <code>laptop-rich-bottom.webp</code>
+          <a href="shots/laptop-rich-bottom.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/laptop-files.webp" data-label="Files tab">
+        <button type="button" class="thumb" aria-label="Open Files tab full size">
+          <img src="shots/laptop-files.webp" loading="lazy" alt="Files tab">
+        </button>
+        <figcaption>
+          <b>Files tab</b>
+          <code>laptop-files.webp</code>
+          <a href="shots/laptop-files.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="tabs shot" data-src="shots/laptop-changes.webp" data-label="Changes tab (diff)">
+        <button type="button" class="thumb" aria-label="Open Changes tab (diff) full size">
+          <img src="shots/laptop-changes.webp" loading="lazy" alt="Changes tab (diff)">
+        </button>
+        <figcaption>
+          <b>Changes tab (diff)</b>
+          <code>laptop-changes.webp</code>
+          <a href="shots/laptop-changes.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="folder shot" data-src="shots/laptop-folder-b.webp" data-label="Folder B — session list">
+        <button type="button" class="thumb" aria-label="Open Folder B — session list full size">
+          <img src="shots/laptop-folder-b.webp" loading="lazy" alt="Folder B — session list">
+        </button>
+        <figcaption>
+          <b>Folder B — session list</b>
+          <code>laptop-folder-b.webp</code>
+          <a href="shots/laptop-folder-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+      <figure class="chat shot" data-src="shots/laptop-chat-b.webp" data-label="Chat (folder B) — Parse CSV edge cases">
+        <button type="button" class="thumb" aria-label="Open Chat (folder B) — Parse CSV edge cases full size">
+          <img src="shots/laptop-chat-b.webp" loading="lazy" alt="Chat (folder B) — Parse CSV edge cases">
+        </button>
+        <figcaption>
+          <b>Chat (folder B) — Parse CSV edge cases</b>
+          <code>laptop-chat-b.webp</code>
+          <a href="shots/laptop-chat-b.webp" target="_blank" rel="noreferrer">open raw ↗</a>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+<div id="lb" hidden role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+  <div id="lb-bar">
+    <button type="button" id="lb-prev" aria-label="Previous shot">‹</button>
+    <button type="button" id="lb-next" aria-label="Next shot">›</button>
+    <span class="grow"><b id="lb-cap"></b></span>
+    <span id="lb-count"></span>
+    <span class="kbd" style="color:#525252">← → to browse · Esc to close</span>
+    <button type="button" id="lb-close" aria-label="Close">✕</button>
+  </div>
+  <div id="lb-stage"><img id="lb-img" alt=""></div>
+</div>
+<script>
+// Lightbox: click a shot to open, ←/→ (and swipe) to walk the whole
+// review, Esc to close. Order follows the page: every view of display 1,
+// then display 2, then 3 — so a redesign can be reviewed as one sequence.
+(() => {
+  const shots = Array.from(document.querySelectorAll("figure.shot"));
+  const lb = document.getElementById("lb");
+  const img = document.getElementById("lb-img");
+  const cap = document.getElementById("lb-cap");
+  const count = document.getElementById("lb-count");
+  let i = 0;
+
+  function show(n) {
+    i = (n + shots.length) % shots.length;
+    const fig = shots[i];
+    img.src = fig.dataset.src;
+    img.alt = fig.dataset.label || "";
+    cap.textContent = fig.dataset.label || fig.dataset.src;
+    const section = fig.closest("section");
+    count.textContent =
+      (i + 1) + " / " + shots.length +
+      (section ? " · " + (section.dataset.title || "") : "");
+    lb.hidden = false;
+    document.body.style.overflow = "hidden";
+    // Warm the neighbours so arrow-key browsing feels instant.
+    for (const d of [-1, 1]) {
+      const n2 = (i + d + shots.length) % shots.length;
+      const pre = new Image();
+      pre.src = shots[n2].dataset.src;
+    }
+  }
+  function close() {
+    lb.hidden = true;
+    document.body.style.overflow = "";
+    img.removeAttribute("src");
+  }
+
+  shots.forEach((fig, n) => {
+    const b = fig.querySelector("button.thumb");
+    if (b) b.addEventListener("click", () => show(n));
+  });
+  document.getElementById("lb-prev").onclick = () => show(i - 1);
+  document.getElementById("lb-next").onclick = () => show(i + 1);
+  document.getElementById("lb-close").onclick = close;
+  document.getElementById("lb-stage").onclick = close;
+  lb.addEventListener("click", (e) => { if (e.target === lb) close(); });
+
+  addEventListener("keydown", (e) => {
+    if (lb.hidden) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); show(i - 1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); show(i + 1); }
+    else if (e.key === "Home") { e.preventDefault(); show(0); }
+    else if (e.key === "End") { e.preventDefault(); show(shots.length - 1); }
+  });
+
+  // Touch: horizontal swipe moves through the sequence.
+  let x0 = null;
+  lb.addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; },
+    { passive: true });
+  lb.addEventListener("touchend", (e) => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0;
+    if (Math.abs(dx) > 45) show(i + (dx < 0 ? 1 : -1));
+    x0 = null;
+  }, { passive: true });
+})();
+</script>
+</body>
+</html>

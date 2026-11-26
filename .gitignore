@@ -24,14 +24,16 @@ dev-data/search-index/
 test-results/
 playwright-report/
 # Visual-review galleries from `npm run shots` (one dir per run).
+# The PUBLISHED gallery lives in site/ and IS committed — that is what
+# GitHub Pages serves.
 shots/
 # Mock dev stack runtime state (bin/dev.mjs isolates VOIR_DATA_DIR
 # here so the npm run dev:mock / e2e stacks never touch real state).
 dev-data/runtime/
-# bin/dev.mjs turns the sample worktrees into throwaway git repos at
-# runtime (the Changes tab needs a real base branch + dirty tree).
-# They are fixtures, not submodules — never commit them.
-dev-data/*/.git/
+# bin/dev.mjs copies the pristine samples in dev-data/project-* here
+# and turns the copies into throwaway git repos (the Changes tab needs a
+# real base branch + dirty tree). Derived, gitignored, rebuilt by --fresh.
+dev-data/worktrees/
 # Playwright MCP browser artifacts (snapshots, console logs) when
 # driving the dev stack interactively from this repo.
 .playwright-mcp/

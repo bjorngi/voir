@@ -1,0 +1,44 @@
+name: pages
+
+# Publishes the visual-review gallery (site/) to GitHub Pages.
+#
+# The gallery is generated locally with `npm run shots:publish`
+# (bin/shots.ts walks the running mock stack across every display in
+# test/displays.ts) and committed under site/. This workflow only ships
+# it — it does not run the app, so a Pages deploy never depends on a dev
+# server, an agent binary, or a browser download.
+#
+# Pages must be enabled with "Build and deployment → Source: GitHub
+# Actions" (done once via the API; see the repo's Pages settings).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

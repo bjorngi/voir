@@ -1,0 +1,7 @@
+{
+  "name": "project-a",
+  "version": "0.1.0",
+  "description": "Demo worktree for the Voir dev compose.",
+  "type": "module",
+  "main": "src/main.ts"
+}

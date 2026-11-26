@@ -230,7 +230,7 @@ export function MessageRail({
     // from the text does not read as a map of it.
     <nav
       aria-label="Messages"
-      className="pointer-events-none absolute inset-y-0 left-1/2 z-10 w-full max-w-3xl -translate-x-1/2 select-none lg:max-w-4xl 2xl:max-w-5xl"
+      className="pointer-events-none absolute inset-y-0 left-1/2 z-10 w-full max-w-[68rem] -translate-x-1/2 select-none min-[1280px]:max-w-5xl"
     >
       {/* Hit strip: 24px wide whatever the visual width, so a 3px slit is
           still a comfortable tap target. The visual parts (track, band,

@@ -729,10 +729,14 @@ export function ChatView({
              under it (the rail is 12px, the padding was 12–16px). */
           className="scrollbar-hide absolute inset-0 overflow-y-auto px-3 py-3 pr-5 sm:px-4 sm:pr-5"
         >
-          {/* Reading measure grows with the viewport: 768 → 896 → 1024.
-              Wider than that and lines get hard to track; narrower wastes
-              a laptop screen. */}
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 pr-2 sm:gap-3 sm:pr-3 lg:max-w-4xl 2xl:max-w-5xl">
+          {/* Reading measure: full width up to 68rem, then a 1024px column.
+              The fold's inner pane in landscape is ~820–1090 CSS px wide
+              (it depends on the panel's device pixel ratio), and capping it
+              at 768px left black bands on both sides — the panes below the
+              cap are slabs and tablets, where the full width IS the right
+              measure. Laptops and desktops get the column: past ~1024px of
+              text the eye loses the line. */}
+          <div className="mx-auto flex w-full max-w-[68rem] flex-col gap-2 pr-2 sm:gap-3 sm:pr-3 min-[1280px]:max-w-5xl">
             {rendered.map((m) => (
               <MessageBubble
                 key={m.id}
@@ -788,7 +792,7 @@ export function ChatView({
           onStop={stopPlaying}
         />
       )}
-      <div className="mx-auto w-full max-w-3xl lg:max-w-4xl 2xl:max-w-5xl">
+      <div className="mx-auto w-full max-w-[68rem] min-[1280px]:max-w-5xl">
       {voice.active ? (
         /* Voice conversation mode owns the input area: the composer
            is replaced by the voice panel (mic orb, live transcript,

@@ -71,7 +71,12 @@ Media queries key on **capability**, never on width alone:
   composer after sending (the keyboard must close), larger tap targets.
 - `(hover: hover)`/fine → "⌘+Enter to send", keep focus after sending.
 - `(max-height: 560px)` → the landscape panes; further compaction.
-- Viewport width → reading measure (768 → 896 → 1024px) and tab labels.
+- Viewport width → tab labels, and the reading measure: **full width up to
+  68rem, then a 1024px column** (`min-[1280px]:max-w-5xl`). Panes at or below
+  the cap are phones, folds and tablets — there the full width *is* the right
+  measure, and capping at 768px literally drew black bands down both sides of
+  the fold's landscape pane. Only genuinely wide screens (laptop, desktop)
+  get the column, because past ~1024px of text the eye loses the line.
 
 **Never gate a control on a capability.** Voice and push are unavailable over
 plain HTTP (no secure context). They still render, dimmed, with the reason

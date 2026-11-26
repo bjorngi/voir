@@ -63,7 +63,11 @@ const HEARTBEAT_INTERVAL_MS = 10_000;
  * navigation, so the scan must not sit in that path: results
  * are cached per agent and served stale-while-revalidate (see
  * cachedList). The TTL is the background refresh cadence —
- * a terminal-created session appears within one window.
+ * a terminal-created session appears within one window. 30s
+ * default (was 10s): the agent-side list is a full scan of
+ * every session file (seconds once the store grows), so a
+ * longer cadence trades a little list freshness for much
+ * less scan churn. VOIR_LIST_CACHE_TTL_MS still overrides.
  * Sessions voir itself creates are visible immediately via
  * the in-memory merge (listSessions), never hidden by a
  * cached list. Folder register/unregister drops the entry.
@@ -152,6 +156,10 @@ class SessionManager {
       }
       this.clients.set(key, client);
       existing.agentUrl = opts.agentUrl;
+      // New bridge URL = the agent restarted. Invalidate the
+      // live-view guarantee of every session stamped with an
+      // older epoch (see SessionState.clientEpoch).
+      existing.clientEpoch = (existing.clientEpoch ?? 0) + 1;
       if (opts.agentName !== undefined) existing.agentName = opts.agentName;
       existing.promptCapabilities = init.agentCapabilities?.promptCapabilities;
       this.sweepPresetChange(existing, opts.preset);
@@ -174,6 +182,7 @@ class SessionManager {
       lastSeenAt: Date.now(),
       sessions: new Map(),
       activeSessionId: null,
+      clientEpoch: 0,
       availableCommands: [],
       preset: opts.preset,
       presetOptions: opts.presetOptions,
@@ -435,11 +444,27 @@ class SessionManager {
     const holder = this.sessionAgent(folder, sessionId);
     if (holder) {
       const existing = holder.sessions.get(sessionId)!;
-      if (existing.messages.length > 0 || existing.replaying) {
+      // A session voir created, loaded, or resumed in this
+      // client generation is already the live view — updates
+      // arrive over the notification stream, and an empty one
+      // has nothing to replay. Skipping the load spares every
+      // just-created chat the second agent boot that pi-acp
+      // charges per session/load (a fresh child process).
+      // The clientEpoch guard keeps the heal path intact: if
+      // the agent restarted since (new bridge URL → bumped
+      // epoch), a created-but-never-prompted session reloads
+      // from disk truth exactly like a stub would.
+      if (
+        existing.messages.length > 0 ||
+        existing.replaying ||
+        (existing.stub !== true &&
+          existing.clientEpoch === holder.clientEpoch)
+      ) {
         return { state: holder, session: existing };
       }
-      // An empty stub (hydrated from the agent's session/list):
-      // replay the transcript from agent truth.
+      // An empty stub (hydrated from the agent's session/list),
+      // or a pre-epoch session: replay the transcript from
+      // agent truth.
       return {
         state: holder,
         session: await this.loadSession(holder.path, sessionId, identityOf(holder)),
@@ -511,6 +536,10 @@ class SessionManager {
       messages: [],
       busy: false,
     };
+    // This client generation owns the live view (see
+    // SessionState.clientEpoch) — findOrLoadSession will not
+    // reload an empty created session.
+    session.clientEpoch = state.clientEpoch;
     state.sessions.set(res.sessionId, session);
     state.activeSessionId = res.sessionId;
     // Every new chat is something you're working on
@@ -544,6 +573,9 @@ class SessionManager {
     // The stub (if any) is about to be replaced by the replayed
     // transcript — from here on voir makes live claims again.
     session.stub = false;
+    // The load established the live view under this client
+    // generation (see SessionState.clientEpoch).
+    session.clientEpoch = state.clientEpoch;
     const replayDone = new Promise<void>((resolve) => {
       session.replayDoneResolver = resolve;
     });
@@ -613,6 +645,7 @@ class SessionManager {
     // Mirror loadSession's stub handling: the session becomes
     // voir-authoritative from here (see loadSession).
     session.stub = false;
+    session.clientEpoch = state.clientEpoch;
     state.sessions.set(sessionId, session);
     state.activeSessionId = sessionId;
     return session;
@@ -1843,6 +1876,17 @@ export interface SessionState {
    * empty, not unknown (docs/session-status.md).
    */
   stub?: boolean;
+  /**
+   * The owning FolderState's clientEpoch when voir last
+   * established this session live (created, loaded, or
+   * resumed). Equal epochs mean the same agent client, so an
+   * empty live session needs no session/load replay on
+   * navigation — findOrLoadSession trusts the in-memory view.
+   * A mismatch (agent restarted → epoch bumped) or an
+   * undefined stamp (sessions from before this field) falls
+   * back to loading, preserving the restart heal path.
+   */
+  clientEpoch?: number;
 }
 
 export interface FolderState {
@@ -1850,6 +1894,14 @@ export interface FolderState {
   agentUrl: string;
   agentName?: string;
   registeredAt: number;
+  /**
+   * Bumped every time the agent client behind this state is
+   * rebuilt (a re-registration with a new bridge URL — the
+   * launcher-restart signature). Sessions stamped with an
+   * older epoch reload from agent truth instead of trusting
+   * their in-memory view (see SessionState.clientEpoch).
+   */
+  clientEpoch: number;
   /**
    * Liveness of the agent leg. `degraded` = heartbeat pings are
    * failing; the folder is kept (sessions, clients, heartbeats)

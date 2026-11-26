@@ -183,6 +183,7 @@ function folderOf(status: "ok" | "degraded" = "ok"): FolderState {
     path: "/w/feat-42",
     agentUrl: "http://127.0.0.1:1/",
     registeredAt: 0,
+    clientEpoch: 0,
     status,
     lastSeenAt: 0,
     sessions: new Map(),

@@ -21,6 +21,7 @@ import { MessageBubble } from "~/components/Message";
 import { Composer } from "~/components/Composer";
 import { ModelDrawer, usePendingSet } from "~/components/ModelDrawer";
 import { VoicePanel } from "./VoicePanel";
+import { PlaybackPanel } from "./PlaybackPanel";
 import { modelVision } from "~/lib/chat-types";
 import { RichContext } from "~/lib/render/rich-context";
 
@@ -444,6 +445,12 @@ export function ChatView({
     setSounds: setVoiceSounds,
     setKeepAwake: setVoiceKeepAwake,
   } = useVoicePrefs();
+  // Latest-value ref: playMessage reads the voice prefs at call
+  // time without depending on them — a dep would churn its
+  // identity on every settings edit and re-render (markdown
+  // re-parse, selection loss) the whole transcript.
+  const voicePrefsRef = useRef(voicePrefs);
+  voicePrefsRef.current = voicePrefs;
   const voice = useVoiceMode({
     busy,
     ttsSpeaking: () => tts.speaking(),
@@ -580,7 +587,7 @@ export function ChatView({
   const [playingId, setPlayingId] = useState<string | null>(null);
   const { speak, cancel: cancelTts, speaking, preparePlayback } = tts;
   const playMessage = useCallback(
-    (m: ChatMessage, isPlaying: boolean) => {
+    (m: ChatMessage, isPlaying: boolean, opts?: { voice?: string | null; speed?: number }) => {
       if (m.kind !== "text" || m.streaming || !m.text) return;
       preparePlayback(); // the tap is the gesture that unlocks audio
       cancelTts();
@@ -589,18 +596,30 @@ export function ChatView({
         return;
       }
       setPlayingId(m.id);
+      // The playback panel re-plays with a fresh pick via `opts`
+      // (the pref state won't have committed yet); ordinary plays
+      // read the panel prefs through the ref.
+      const p = voicePrefsRef.current;
+      const voice = opts && "voice" in opts ? opts.voice : p.ttsVoice;
+      const speed = opts?.speed ?? p.ttsSpeed;
       for (const text of narrationChunks(m.text, { final: true })) {
         speak(text, {
           force: true,
           // The voice panel's picks apply here too — replay should
           // sound like voice mode, not swap voices on the user.
-          voice: voicePrefs.ttsVoice ?? undefined,
-          speed: voicePrefs.ttsSpeed,
+          voice: voice ?? undefined,
+          speed,
         });
       }
     },
-    [speak, cancelTts, preparePlayback, voicePrefs.ttsVoice, voicePrefs.ttsSpeed],
+    [speak, cancelTts, preparePlayback],
   );
+  // Stop from the playback panel (and Esc) — same as the ■ on
+  // the message, without a message lookup.
+  const stopPlaying = useCallback(() => {
+    cancelTts();
+    setPlayingId(null);
+  }, [cancelTts]);
   // speaking() is a probe, not reactive state — poll while a
   // retro play runs so the ■ flips back to ▶ when audio drains.
   useEffect(() => {
@@ -663,6 +682,15 @@ export function ChatView({
     setVoiceDraft({ text, seq: Date.now() });
   }, []);
 
+  // Retro playback panel inputs: the playing message (for a
+  // restart-on-settings-change) and a one-line excerpt.
+  const playingMessage =
+    playingId !== null ? messages.find((m) => m.id === playingId) : undefined;
+  const playingExcerpt =
+    playingMessage?.kind === "text"
+      ? (playingMessage.text ?? "").replace(/\s+/g, " ").slice(0, 64)
+      : "";
+
   return (
     <RichContext.Provider value={{ folder: folder.path }}>
     <div className="flex h-full min-h-0 flex-col">
@@ -717,6 +745,27 @@ export function ChatView({
           justConnected={justConnected}
         />
       </div>
+      {/* Retro playback strip: while a ▶ narration runs, the voice
+          settings (engine, voice, speed) sit above the composer —
+          the composer stays mounted (a draft mid-typing must not
+          churn). Never in voice mode: the VoicePanel has the same
+          settings already. */}
+      {!voice.active && playingId && (
+        <PlaybackPanel
+          tts={tts}
+          prefs={voicePrefs}
+          excerpt={playingExcerpt}
+          onVoiceChange={(v) => {
+            setVoiceTtsVoice(v);
+            if (playingMessage) playMessage(playingMessage, false, { voice: v });
+          }}
+          onSpeedChange={(v) => {
+            setVoiceTtsSpeed(v);
+            if (playingMessage) playMessage(playingMessage, false, { speed: v });
+          }}
+          onStop={stopPlaying}
+        />
+      )}
       {voice.active ? (
         /* Voice conversation mode owns the input area: the composer
            is replaced by the voice panel (mic orb, live transcript,

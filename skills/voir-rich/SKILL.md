@@ -1,6 +1,6 @@
 ---
 name: voir-rich
-description: Render rich output in voir (the chat host this session may be attached to via ACP) — summary cards (voir-card), charts (voir-chart), mermaid diagrams, sandboxed d3 visualizations, single-file HTML apps, and worktree image thumbnails. Load when you want to convey information visually in the chat: dashboards, diagrams, graphs, briefings, verdict cards, or any bespoke graphic.
+description: "Render rich output in voir (the chat host this session may be attached to via ACP) — summary cards (voir-card), charts (voir-chart), mermaid diagrams, sandboxed d3 visualizations, single-file HTML apps, and worktree image thumbnails. Load when you want to convey information visually in the chat: dashboards, diagrams, graphs, briefings, verdict cards, or any bespoke graphic."
 ---
 
 # Voir rich content — block schemas and examples

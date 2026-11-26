@@ -55,6 +55,43 @@ npm run build
 npm start            # http://localhost:9000
 ```
 
+### 1b. Or run the whole thing with mock agents
+
+No ACP binary, no API key, no docker — one command starts the dev
+server plus two mock agents attached to `dev-data/project-a` and
+dev-data/project-b`, each pre-seeded with a different set of
+sessions (rich-content demo, tool calls, diffs, varied ages, one
+archived):
+
+```sh
+npm run dev:mock     # http://localhost:9000 — Ctrl-C tears it all down
+```
+
+This is the stack to have open while restyling the UI: every
+renderable thing (streaming, thoughts, tool calls, inline diffs,
+mermaid, charts, cards, tables, ha chips, sandboxes, the model
+drawer, archived sessions, "Working on") is on screen without
+touching a real agent. The stack is isolated from the real one —
+its durable state goes to `dev-data/runtime/` and telemetry is
+disabled — so it's safe to run next to a production instance.
+`MOCK_VARIANT=a|b` picks each mock's seed set (see `bin/mock-acp.mjs`);
+`docker compose up` runs the same two mocks with the same seeds.
+
+The e2e walkthrough (Playwright, headless chromium) boots this
+same stack on its own port and walks the app end to end:
+
+```sh
+npm run test:e2e     # test/e2e/walkthrough.spec.ts — ~45s
+```
+
+For interactive poking there's also a dedicated Playwright MCP
+browser server (agents get it wired as `voir-browser` via
+`.pi/mcp.json`; see AGENTS.md):
+
+```sh
+npm run mcp:browser   # npx @playwright/mcp --port 8932 --browser chromium
+```
+
 ### 2. Pick an ACP agent and add a chat
 
 You need an ACP-compatible agent on your `PATH`. Pick one:

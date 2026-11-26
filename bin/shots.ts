@@ -256,7 +256,14 @@ for (const d of DISPLAYS) {
 
     // 3b) Chrome collapsed: the conversation-only view, with the
     // restore handle pinned to the top-right corner.
-    await page.getByLabel("Hide top bar").click();
+    // Hide is inline on wide bars and inside the ⋯ menu on phones.
+    const hideInline = page.getByLabel("Hide top bar").first();
+    if ((await hideInline.count()) && (await hideInline.isVisible())) {
+      await hideInline.click();
+    } else {
+      await page.getByLabel("More actions").click();
+      await page.getByRole("button", { name: "Hide top bar" }).click();
+    }
     await page.waitForTimeout(350);
     await shot(page, d.id, "chrome", "bar-hidden", "Chat — top bar hidden", false);
     await page.getByLabel("Show top bar").click();

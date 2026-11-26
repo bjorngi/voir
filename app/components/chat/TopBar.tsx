@@ -208,10 +208,19 @@ function ViewTab({
           the width belongs to the context label. */}
       <span className="hidden [@media(min-width:480px)]:inline">{label}</span>
       {badge && badge.files > 0 && (
-        <span className="ml-0.5 inline-flex items-center gap-1 font-mono text-[10px]">
-          <span className="text-emerald-400">+{badge.additions}</span>
-          <span className="text-rose-400">−{badge.deletions}</span>
-        </span>
+        <>
+          {/* The counts are informative but 70px wide; on a phone they cost
+              more than the title can afford, so the tab shows a dot and the
+              numbers return from 560px. */}
+          <span
+            aria-hidden
+            className="ml-0.5 h-1.5 w-1.5 rounded-full bg-amber-400 [@media(min-width:560px)]:hidden"
+          />
+          <span className="ml-0.5 hidden items-center gap-1 font-mono text-[10px] [@media(min-width:560px)]:inline-flex">
+            <span className="text-emerald-400">+{badge.additions}</span>
+            <span className="text-rose-400">−{badge.deletions}</span>
+          </span>
+        </>
       )}
     </a>
   );
@@ -337,6 +346,8 @@ export function TopBar({
   menuOpen,
   onMenu,
   onHide,
+  model,
+  agent,
   voice,
   star,
   push,
@@ -364,8 +375,15 @@ export function TopBar({
   star?: { status: SessionStatus | undefined; folder: string; sessionId: string };
   push?: { state: PushState; onToggle: () => void };
   /** Collapse the bar to nothing; the caller renders the restore
-   *  affordance pinned to the top-right corner. */
+   *  affordance pinned to the top-right corner. Lives in the ⋯ menu so the
+   *  bar has room for the model chip. */
   onHide?: () => void;
+  /** The live model, as a chip on the right. Tapping opens the model/mode
+   *  sheet — the bottom-edge grip lost to Android's swipe-up gesture. */
+  model?: { label: string; onOpen: () => void };
+  /** Which agent serves this folder, shown next to the title (wide screens;
+   *  on a phone the title has the room instead). */
+  agent?: string;
   /** When present, the view switcher renders inside the bar. */
   tabs?: {
     folder: string;
@@ -498,6 +516,27 @@ export function TopBar({
           </svg>
         </IconButton>
       )}
+      {onHide && (
+        <IconButton
+          label="Hide top bar"
+          title="Hide top bar — more room for the conversation"
+          onClick={onHide}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="6 15 12 9 18 15" />
+          </svg>
+        </IconButton>
+      )}
       <IconButton
         label="Reload"
         title="Reload — the PWA has no browser reload button"
@@ -611,8 +650,13 @@ export function TopBar({
             <span className="min-w-0 max-w-[14rem] truncate text-[13px] text-neutral-200 lg:max-w-[22rem]">
               {label}
             </span>
+            {agent && (
+              <span className="hidden shrink-0 font-mono text-[11px] text-neutral-600 md:inline">
+                {agent}
+              </span>
+            )}
             {title && (
-              <span className="hidden min-w-0 max-w-[16rem] truncate font-mono text-[11px] text-neutral-600 lg:inline">
+              <span className="hidden min-w-0 max-w-[16rem] truncate font-mono text-[11px] text-neutral-600 xl:inline">
                 {title}
               </span>
             )}
@@ -630,6 +674,22 @@ export function TopBar({
         </div>
       )}
 
+      {/* Model chip: the live model, one tap from its sheet. It is the one
+          piece of agent state you want visible while writing, and it is a
+          full-size target in a corner that is always easy to reach. */}
+      {model && (
+        <button
+          type="button"
+          onClick={model.onOpen}
+          aria-label="Open model, mode and fence"
+          title={`${model.label} — model, mode and fence`}
+          className="ml-1 inline-flex h-8 max-w-[7rem] shrink-0 items-center gap-1.5 rounded border border-neutral-800 bg-neutral-900/60 px-1.5 font-mono text-[10px] text-neutral-400 active:bg-neutral-800 hover:text-neutral-200 sm:px-2 sm:text-[11px]"
+        >
+          <span aria-hidden className="hidden h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/70 sm:inline-block" />
+          <span className="truncate">{model.label}</span>
+        </button>
+      )}
+
       {/* Spacer: context+tabs stay together on the left, actions sit
           against the right edge where they are easy to hit. */}
       <div className="min-w-2 flex-1" />
@@ -637,30 +697,6 @@ export function TopBar({
       {/* Secondary actions: inline when there is room, otherwise the ⋯
           menu — same accessible names either way. */}
       <div className="hidden items-center md:flex">{secondary}</div>
-      {/* Hide the whole bar; the caller renders the way back (a small
-          button pinned to the top-right corner of the viewport). */}
-      {onHide && (
-        <IconButton
-          label="Hide top bar"
-          title="Hide top bar — more room for the conversation"
-          onClick={onHide}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polyline points="6 15 12 9 18 15" />
-          </svg>
-        </IconButton>
-      )}
-
       <div className="relative md:hidden" ref={box}>
         <IconButton
           label={overflow ? "Close actions" : "More actions"}
@@ -772,6 +808,29 @@ export function TopBar({
                 >
                   <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
                   <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+              </MenuItem>
+            )}
+            {onHide && (
+              <MenuItem
+                label="Hide top bar"
+                onClick={() => {
+                  setOverflow(false);
+                  onHide();
+                }}
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="6 15 12 9 18 15" />
                 </svg>
               </MenuItem>
             )}

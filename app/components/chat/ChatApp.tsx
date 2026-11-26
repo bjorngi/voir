@@ -44,6 +44,15 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
   // Agent-stream state, reported up by ChatView so the bar's status dot
   // can carry it (it used to be a full-width banner over the transcript).
   const [conn, setConn] = useState<ConnState | null>(null);
+  // Model sheet is owned here: its trigger is the top bar's model chip.
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [modelLabel, setModelLabel] = useState<string | null>(null);
+
+  // Leaving the conversation closes its sheet: a modal that outlives the
+  // session it belongs to is a trap.
+  useEffect(() => {
+    setSheetOpen(false);
+  }, [data.k]);
 
   const [barHidden, setBarHidden] = useState(false);
   useEffect(() => {
@@ -167,6 +176,12 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         menuOpen={pickerOpen}
         onMenu={() => setPickerOpen((v) => !v)}
         onHide={() => setBar(true)}
+        agent={data.k === "folders" ? undefined : data.folder.agentName}
+        model={
+          data.k === "chat" && modelLabel
+            ? { label: modelLabel, onOpen: () => setSheetOpen(true) }
+            : undefined
+        }
         star={
           data.k === "chat"
             ? {
@@ -220,6 +235,9 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
           <ChatView
             data={data}
             onConnection={setConn}
+            sheetOpen={sheetOpen}
+            onSheetOpenChange={setSheetOpen}
+            onModelLabel={setModelLabel}
             tts={tts}
             voiceActive={voiceActive}
             onVoiceActiveChange={setVoiceActive}

@@ -19,6 +19,9 @@ export default [
   route("api/session-status", "routes/api.session-status.tsx"),
   // Cross-session search (docs/search.md) — the picker's search box.
   route("api/search", "routes/api.search.tsx"),
+  // Navigation index for the phone menu (folders + sessions, fetched when
+  // the sheet opens instead of on every chat page load).
+  route("api/nav", "routes/api.nav.tsx"),
   route("api/timeline-restore", "routes/api.timeline-restore.tsx"),
   route("api/timeline-diff", "routes/api.timeline-diff.tsx"),
   route("api/commit", "routes/api.commit.tsx"),

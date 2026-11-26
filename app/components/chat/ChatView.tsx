@@ -40,6 +40,9 @@ export function ChatView({
   voiceActive,
   onVoiceActiveChange,
   onConnection,
+  sheetOpen,
+  onSheetOpenChange,
+  onModelLabel,
 }: {
   data: ChatData;
   tts: Tts;
@@ -49,6 +52,12 @@ export function ChatView({
    *  shows it — this replaces the full-width "Connected — live" banner
    *  that used to blanket the first line of the transcript. */
   onConnection?: (state: ConnState) => void;
+  /** The model/mode sheet is owned by the shell now: its trigger lives in
+   *  the top bar (the bottom edge belongs to Android's swipe-up gesture). */
+  sheetOpen: boolean;
+  onSheetOpenChange: (open: boolean) => void;
+  /** Reports the live model so the bar's chip can name it. */
+  onModelLabel?: (label: string | null) => void;
 }) {
   const { folder, session: initial } = data;
   const [messages, setMessages] = useState<ChatMessage[]>(initial.messages);
@@ -73,7 +82,6 @@ export function ChatView({
   // mechanism. The drawer is always mounted when there's
   // something to show, so the chevron affordance is never
   // hidden behind a tap.
-  const [drawerOpen, setDrawerOpen] = useState(false);
   // The model/mode pickers and slash-command palette all read
   // from the loader snapshot at first render. The agent
   // re-advertises the same data via notifications
@@ -96,14 +104,8 @@ export function ChatView({
   // The grip's status line: which model and mode are live, in short form.
   // The old ▴ showed nothing; this answers "what am I talking to" at a
   // glance and makes the strip read as a control rather than decoration.
-  const sheetLabel = [
-    currentModelId?.split("/").pop(),
-    availableModes
-      .find((m) => m.id === currentModeId)
-      ?.name?.toLowerCase(),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+
+  const sheetLabel = currentModelId?.split("/").pop() ?? "model";
 
   // The supervisor preset (fence command) the agent hosting this
   // chat runs under, and the catalog's other preset names. Both
@@ -731,6 +733,28 @@ export function ChatView({
       ? (playingMessage.text ?? "").replace(/\s+/g, " ").slice(0, 64)
       : "";
 
+  // The bar's model chip names the live model; it is owned there so the
+  // trigger sits in a corner that is easy to hit on every device.
+  useEffect(() => {
+    onModelLabel?.(currentModelId ? currentModelId.split("/").pop()! : null);
+  }, [currentModelId, onModelLabel]);
+
+  // What the tiny line above the field says. Priority: something is wrong
+  // (stream down) → something is running (turn, queue) → the standing
+  // configuration (mode, fence). Nothing to say → no line.
+  const statusLine = [
+    connected ? null : everConnected.current ? "reconnecting…" : "connecting…",
+    busy
+      ? `working${queueDepth > 0 ? ` · queued ${queueDepth}` : "…"}`
+      : null,
+    availableModes.find((m) => m.id === currentModeId)?.name
+      ? `mode ${availableModes.find((m) => m.id === currentModeId)!.name!.toLowerCase()}`
+      : null,
+    currentPreset ? `fence: ${currentPreset}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <RichContext.Provider value={{ folder: folder.path }}>
     <div className="flex h-full min-h-0 flex-col">
@@ -846,8 +870,8 @@ export function ChatView({
             availableModes.length > 0 ||
             presetOptions.length > 0) && (
             <ModelSheet
-              open={drawerOpen}
-              onClose={() => setDrawerOpen(false)}
+              open={sheetOpen}
+              onClose={() => onSheetOpenChange(false)}
               models={availableModels}
               modes={availableModes}
               presets={presetOptions}
@@ -861,7 +885,7 @@ export function ChatView({
                 await sendAction(initial.id, folder.path, action, v);
                 if (kind === "model") setCurrentModelId(v);
                 else setCurrentModeId(v);
-                setDrawerOpen(false);
+                onSheetOpenChange(false);
               }}
               onPickPreset={async (p) => {
                 setPresetPending(true);
@@ -877,7 +901,7 @@ export function ChatView({
                   });
                   if (!res.ok) throw new Error(`PATCH ${res.status}`);
                   setCurrentPreset(p);
-                  setDrawerOpen(false);
+                  onSheetOpenChange(false);
                 } catch {
                   console.warn("fence switch failed");
                 } finally {
@@ -892,8 +916,7 @@ export function ChatView({
           <Composer
             folder={folder.path}
             sessionId={initial.id}
-            onOpenModelSheet={() => setDrawerOpen(true)}
-            modelLabel={sheetLabel}
+            status={statusLine}
             initialAttach={data.attach}
             imageSupported={data.imageSupported}
             currentModelVision={

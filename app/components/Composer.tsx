@@ -143,8 +143,7 @@ export function Composer({
   imageSupported = false,
   initialShared,
   currentModelVision,
-  onOpenModelSheet,
-  modelLabel,
+  status,
 }: {
   folder: string;
   sessionId: string;
@@ -212,22 +211,19 @@ export function Composer({
    * still matters to the human and models can be switched.
    */
   currentModelVision?: boolean;
-  /** Opens the model/mode/fence sheet from the grip strip under the field.
-   *  The grip is the tap target; swiping up on it does the same. */
-  onOpenModelSheet?: () => void;
-  /** What the grip strip says: the live model (and mode) in short form. */
-  modelLabel?: string | null;
+  /** One muted line above the field — mode, fence, working, queued,
+   *  reconnecting. Empty string hides it. */
+  status?: string;
 }) {
   const fetcher = useFetcher<{ error?: string; ok?: boolean }>();
   // Draft key: per folder+session, so switching conversations keeps
   // drafts separate.
   const draftKey = folder + "\n" + sessionId;
   const [text, setText] = useState(() => loadDraft(draftKey)?.text ?? "");
-  // Gesture bookkeeping: the grip's press (model sheet) and a right-swipe
-  // on an EMPTY field (attach). The empty-field condition is what makes the
-  // horizontal gesture safe: with no text there is nothing to select, so
-  // capturing the drag cannot steal caret/selection behaviour.
-  const grip = useRef({ y: 0, active: false });
+  // Gesture bookkeeping: a right-swipe on an EMPTY field attaches an image.
+  // The empty-field condition is what makes the horizontal gesture safe —
+  // with no text there is nothing to select, so the drag cannot steal caret
+  // or selection behaviour; with text it stays native.
   const swipe = useRef({ x: 0, y: 0, active: false });
   const [mentions, setMentions] = useState<Mention[]>(
     () => loadDraft(draftKey)?.mentions ?? [],
@@ -1018,6 +1014,15 @@ export function Composer({
           (it auto-grows with `field-sizing: content`) and the controls
           sit beside it. items-end keeps SEND on the text baseline as the
           field grows. */}
+      {/* Tiny status line above the field: only what is not obvious. The
+          model lives in the top bar, so this carries the mode/fence and any
+          transient state (working, queued, reconnecting). Renders nothing
+          when there is nothing to say — it must never become decoration. */}
+      {status && (
+        <div className="mb-1 flex items-center gap-1.5 px-1 font-mono text-[10px] leading-none text-neutral-600">
+          <span>{status}</span>
+        </div>
+      )}
       {/* One bordered field, controls inside it. The paperclip and the
           send/dictate control live in the field's own padding instead of
           standing beside it as buttons: on the fold that is ~70px of extra
@@ -1239,46 +1244,6 @@ export function Composer({
           </button>
         </div>
       </div>
-      {/* Grip strip: the tap target for the model sheet and the gesture
-            surface for it (swipe up). It doubles as the status line — which
-            model and mode are live — information the old ▴ never showed.
-            It sits in the composer's bottom padding, so it costs ~10px. */}
-        {onOpenModelSheet && (
-          <div className="flex justify-center pt-0.5">
-            <button
-              type="button"
-              onClick={onOpenModelSheet}
-              onPointerDown={(e) => {
-                grip.current = { y: e.clientY, active: true };
-                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-              }}
-              onPointerUp={(e) => {
-                if (!grip.current.active) return;
-                grip.current.active = false;
-                // Swipe up (≥18px) or a plain tap both open the sheet.
-                void e;
-                onOpenModelSheet();
-              }}
-              onPointerCancel={() => {
-                grip.current.active = false;
-              }}
-              aria-label="Open model, mode and fence"
-              aria-expanded={false}
-              title="Model, mode and fence — tap or swipe up"
-              className="group flex items-center gap-2 rounded px-3 py-0.5 active:bg-white/5"
-            >
-              <span
-                aria-hidden
-                className="h-[3px] w-7 rounded-full bg-neutral-700 transition-colors group-hover:bg-neutral-500"
-              />
-              {modelLabel && (
-                <span className="font-mono text-[9px] leading-none text-neutral-600 transition-colors group-hover:text-neutral-400">
-                  {modelLabel}
-                </span>
-              )}
-            </button>
-          </div>
-      )}
     </div>
   );
 }

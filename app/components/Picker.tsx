@@ -1,5 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { ActivityRow } from "~/lib/chat-types";
+import { folderUrl } from "~/lib/urls";
+
+/** One folder in the navigation index (/api/nav). */
+type NavFolder = {
+  path: string;
+  agents: string[];
+  sessions: {
+    id: string;
+    title: string | undefined;
+    status: string | undefined;
+    updatedAt: number;
+    busy: boolean;
+  }[];
+};
 import type { SearchHit, SearchSessionResult } from "~/lib/search.server";
 import { shortPath } from "~/lib/format";
 import { sessionUrl } from "~/lib/urls";
@@ -37,6 +51,24 @@ export function Picker({
   // this token keeps the spinner honest so a stale response can't
   // clear it while the newest query is still running.
   const genRef = useRef(0);
+  // Folder/session index for the empty-state list. Fetched once, when the
+  // sheet opens: it is navigation data, and chat page loads must not pay
+  // for it (the whole point of the sheet is that it is not on the hot path).
+  const [nav, setNav] = useState<NavFolder[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/nav")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: { folders: NavFolder[] }) => {
+        if (alive) setNav(d.folders);
+      })
+      .catch(() => {
+        if (alive) setNav([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     const query = q.trim();
@@ -90,12 +122,65 @@ export function Picker({
           />
         </div>
         {results === null ? (
-          <div className="scrollbar-hide flex-1 overflow-y-auto">
+          <div className="scrollbar-hide flex-1 overflow-y-auto pb-6">
             <WorkingOnSection
               rows={active}
               onPick={onClose}
               empty="Nothing active — star a chat to track it here."
             />
+            {nav === null ? (
+              <p className="px-4 py-3 font-mono text-[11px] text-neutral-600">
+                Loading folders…
+              </p>
+            ) : nav.length === 0 ? (
+              <p className="px-4 py-3 text-sm text-neutral-600">
+                No folders registered. Start an agent with acp-spawn.
+              </p>
+            ) : (
+              nav.map((f) => (
+                <section key={f.path} className="border-t border-neutral-900">
+                  <a
+                    href={folderUrl(f.path)}
+                    onClick={onClose}
+                    className="flex items-baseline gap-2 px-4 pb-1 pt-3 active:bg-neutral-900"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-neutral-300">
+                      {shortPath(f.path)}
+                    </span>
+                    <span className="shrink-0 font-mono text-[10px] text-neutral-600">
+                      {f.agents.join(" · ")}
+                    </span>
+                  </a>
+                  {f.sessions.length === 0 ? (
+                    <p className="px-4 pb-2 font-mono text-[11px] text-neutral-700">
+                      no sessions
+                    </p>
+                  ) : (
+                    f.sessions.map((s2) => (
+                      <a
+                        key={s2.id}
+                        href={sessionUrl(f.path, s2.id)}
+                        onClick={onClose}
+                        className="block px-4 py-2 text-[13px] text-neutral-300 active:bg-neutral-900"
+                      >
+                        {s2.status === "archived" && (
+                          <span className="mr-1.5 rounded border border-neutral-800 px-1 py-0.5 font-mono text-[9px] text-neutral-600">
+                            archived
+                          </span>
+                        )}
+                        {s2.status === "active" && (
+                          <span
+                            title="Active — in Working on"
+                            className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-blue-400 align-middle"
+                          />
+                        )}
+                        {s2.title ?? s2.id.slice(0, 8)}
+                      </a>
+                    ))
+                  )}
+                </section>
+              ))
+            )}
           </div>
         ) : (
           <div className="scrollbar-hide flex-1 overflow-y-auto">

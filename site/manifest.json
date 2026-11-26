@@ -1,8 +1,8 @@
 {
-  "stamp": "2026-11-26_22-41-58",
+  "stamp": "2026-11-26_23-13-39",
   "commit": {
-    "sha": "44f6ce2",
-    "subject": "ci(pages): retry the deploy once when artifact metadata flakes"
+    "sha": "f73e339",
+    "subject": "feat(composer): one field, three-meaning control, sheet from the grip strip"
   },
   "devices": [
     {

@@ -68,7 +68,7 @@ export function ModelSheet(props: ModelSheetProps) {
     // Focus the first control so a keyboard user lands inside the sheet;
     // restore happens in the caller (the grip button).
     const t = setTimeout(() => {
-      panel.current?.querySelector<HTMLElement>("select, button")?.focus();
+      panel.current?.querySelector<HTMLElement>("select")?.focus();
     }, 60);
     return () => {
       document.removeEventListener("keydown", onKey);
@@ -118,7 +118,9 @@ export function ModelSheet(props: ModelSheetProps) {
         aria-modal="true"
         aria-label="Model, mode and fence"
         className={
-          "relative max-h-[85vh] overflow-y-auto rounded-t-xl border-t border-neutral-800 bg-neutral-950 pb-[max(env(safe-area-inset-bottom),0.75rem)] shadow-2xl transition-transform duration-150 ease-out"
+          // A sheet, not a wall: capped to a comfortable column so it does
+          // not become 1728px of empty at the bottom of a laptop screen.
+          "relative mx-auto w-full max-w-md max-h-[80vh] overflow-y-auto rounded-t-xl border border-b-0 border-neutral-800 bg-neutral-950 pb-[max(env(safe-area-inset-bottom),0.5rem)] shadow-2xl transition-transform duration-150 ease-out"
         }
         style={{
           transform: `translateY(${shown ? dragY : 400}px)`,
@@ -140,7 +142,7 @@ export function ModelSheet(props: ModelSheetProps) {
           onPointerCancel={endDrag}
         >
           <div className="mx-auto h-1 w-9 rounded-full bg-neutral-700" />
-          <div className="mt-1 flex items-center justify-between px-3 pb-1">
+          <div className="mt-0.5 flex items-center justify-between px-2 pb-0.5">
             <span className="font-mono text-[11px] uppercase tracking-widest text-neutral-500">
               Model · mode · fence
             </span>
@@ -177,7 +179,7 @@ export function ModelSheet(props: ModelSheetProps) {
           // Stacked on a phone: the sheet is an overlay, so vertical room is
           // free — and two 160px columns clip "Cheery 1 (mock) · vision" to
           // "… · visic".
-          <div className="flex flex-col gap-2 p-2 sm:flex-row sm:flex-wrap">
+          <div className="flex flex-col gap-1.5 px-2 pb-1 sm:flex-row sm:flex-wrap">
             {hasModels && (
               <NativeSelect
                 label="Model"
@@ -222,7 +224,7 @@ export function ModelSheet(props: ModelSheetProps) {
         {hasModels && currentVision !== undefined && (
           <div
             className={
-              "px-3 pb-2 font-mono text-[11px] " +
+              "px-2 pb-1.5 font-mono text-[10px] " +
               (currentVision ? "text-emerald-400" : "text-amber-300")
             }
             data-testid="drawer-vision"
@@ -239,7 +241,7 @@ export function ModelSheet(props: ModelSheetProps) {
               type="button"
               onClick={() => void props.onClearCache?.()}
               disabled={props.cacheClearing}
-              className="block w-full px-3 py-2.5 text-left font-mono text-[11px] text-neutral-400 active:bg-neutral-800 disabled:opacity-60"
+              className="block w-full px-2 py-2 text-left font-mono text-[10px] text-neutral-400 active:bg-neutral-800 disabled:opacity-60"
             >
               {props.cacheClearing
                 ? "Clearing — re-syncing from agent truth…"
@@ -267,7 +269,7 @@ function NativeSelect({
   disabled?: boolean;
 }) {
   return (
-    <label className="flex min-w-0 flex-1 basis-40 flex-col gap-1">
+    <label className="flex min-w-0 flex-col gap-0.5 sm:flex-1 sm:basis-40">
       <span className="font-mono text-[10px] uppercase tracking-widest text-neutral-500">
         {label}
       </span>
@@ -275,7 +277,7 @@ function NativeSelect({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full appearance-none border border-neutral-800 bg-neutral-900 px-2 font-mono text-[13px] text-neutral-100 outline-none focus:border-neutral-600 disabled:opacity-60"
+        className="h-9 w-full appearance-none border border-neutral-800 bg-neutral-900 px-2 font-mono text-[13px] text-neutral-100 outline-none focus:border-neutral-600 disabled:opacity-60"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>

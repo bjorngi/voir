@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
@@ -59,5 +59,21 @@ jobs:
           done
           echo "artifact never became visible" >&2
           exit 1
+      # deploy-pages occasionally answers "Found 0 artifact(s)" seconds
+      # after a successful upload, while the artifacts API lists it (the
+      # same query returns it a moment later). Retry once instead of
+      # needing a human to hit "re-run".
       - id: deployment
         uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - name: Pause before the retry
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 25
+      - id: retry
+        if: steps.deployment.outcome == 'failure'
+        uses: actions/deploy-pages@v4
+      - name: Fail if both deploy attempts failed
+        if: steps.deployment.outcome == 'failure' && steps.retry.outcome == 'failure'
+        run: |
+          echo "both deploy attempts failed" >&2
+          exit 1

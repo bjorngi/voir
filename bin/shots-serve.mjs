@@ -51,15 +51,30 @@ run under shots/, port 9310).`);
 
 const opts = parseArgs(process.argv.slice(2));
 
-// ── newest run when --dir is omitted ─────────────────────────────────
+// ── newest gallery when --dir is omitted ─────────────────────────────
+// Candidates are the local runs under shots/<stamp>/ and the published
+// site/ (written by `npm run shots:publish`). Newest wins, so the local
+// URL shows whatever is most recent — and after a publish it matches
+// https://<owner>.github.io/<repo>/ exactly.
 function latestRun() {
+  const candidates = [];
   const base = join(ROOT, "shots");
-  if (!existsSync(base)) return null;
-  const runs = readdirSync(base)
-    .map((name) => join(base, name))
-    .filter((p) => statSync(p).isDirectory() && existsSync(join(p, "index.html")))
-    .sort((a, b) => a.localeCompare(b));
-  return runs.at(-1) ?? null;
+  if (existsSync(base)) {
+    for (const name of readdirSync(base)) {
+      const p = join(base, name);
+      try {
+        if (statSync(p).isDirectory() && existsSync(join(p, "index.html"))) {
+          candidates.push(p);
+        }
+      } catch {}
+    }
+  }
+  const published = join(ROOT, "site");
+  if (existsSync(join(published, "index.html"))) candidates.push(published);
+  if (candidates.length === 0) return null;
+  return candidates.sort(
+    (a, b) => statSync(join(a, "index.html")).mtimeMs - statSync(join(b, "index.html")).mtimeMs,
+  ).at(-1);
 }
 
 const dir = resolve(opts.dir ?? latestRun() ?? "");

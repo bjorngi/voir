@@ -342,6 +342,20 @@ export function Composer({
   const [menuIndex, setMenuIndex] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
 
+  // Which hint belongs in the placeholder: a finger (hold to dictate)
+  // or a keyboard (⌘+Enter to send). Coarse pointer is the honest
+  // signal — it is true on both fold panes and false on the laptop.
+  // Starts false so SSR and the first client render agree.
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(pointer: coarse)");
+    const apply = () => setCoarse(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
   // Speech-to-text dictation: hold the Send button, talk,
   // release — the transcript lands in the composer as a draft
   // (never auto-sent: recognition makes mistakes and an agent
@@ -1027,8 +1041,8 @@ export function Composer({
           }}
           placeholder={
             busy
-              ? "Type to queue… (@ attach, / commands, Esc to stop — hold Send to dictate)"
-              : "Message…  (@ attach, / commands, ⌘+Enter to send — hold Send to dictate)"
+              ? `Type to queue… (@ attach, / commands, Esc to stop${coarse ? " — hold Send to dictate" : ""})`
+              : `Message…  (@ attach, / commands, ${coarse ? "hold Send to dictate" : "⌘+Enter to send"})`
           }
           className={
             "scrollbar-hide composer-textarea flex-1 resize-none border border-neutral-800 bg-neutral-900 px-4 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-600 " +
@@ -1087,7 +1101,7 @@ export function Composer({
             <button
               type="button"
               onClick={onCancel}
-              className="h-11 flex-1 border border-rose-400/60 bg-transparent px-3 text-xs font-semibold uppercase tracking-wider text-rose-300 transition-colors active:bg-rose-500/10 sm:hidden sm:flex-none sm:px-5 sm:text-sm"
+              className="h-11 flex-1 border border-rose-400/60 bg-transparent px-3 text-xs font-semibold uppercase tracking-wider text-rose-300 transition-colors active:bg-rose-500/10 sm:flex-none sm:px-5 sm:text-sm"
               title="Stop the current turn and clear queued messages (Esc)"
             >
               Stop
@@ -1116,7 +1130,11 @@ export function Composer({
             }}
             aria-label={dictating ? "Dictating — release to insert" : "Send message — hold to dictate"}
             className={
-              "h-11 flex-1 select-none border px-5 text-sm font-semibold uppercase tracking-wider [touch-action:manipulation] transition-colors active:bg-white/10 sm:hidden sm:flex-none " +
+              // Visible at every width: on a phone it is the primary
+              // action, on the fold's landscape pane (657px) and on a
+              // laptop it is the only visible one — the shortcut hint is
+              // a convenience, never the sole path.
+              "h-11 flex-1 select-none border px-5 text-sm font-semibold uppercase tracking-wider [touch-action:manipulation] transition-colors active:bg-white/10 sm:flex-none " +
               (dictating
                 ? "border-amber-400/70 bg-transparent text-amber-300 animate-pulse"
                 : busy

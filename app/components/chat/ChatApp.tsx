@@ -19,8 +19,7 @@ import { SessionDebugButton } from "~/components/SessionDebugButton";
 import { ChangesView } from "~/components/ChangesView";
 import { FileExplorer } from "~/components/FileExplorer";
 import { ChatView } from "./ChatView";
-import { ChatTabs, type ChangesBadge } from "./ChatTabs";
-import { Header } from "./Header";
+import { TopBar, type ChangesBadge } from "./TopBar";
 
 export function ChatApp({ data }: { data: ChatLoaderData }) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -82,10 +81,17 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
   // tabs are per-folder).
   const showTabs =
     data.k === "chat" || data.k === "changes" || data.k === "files";
+  // One bar carries the context: which conversation you are in, and on
+  // wide screens the folder it lives in. List views fall back to the
+  // folder's short path.
   const label =
     data.k === "folders"
       ? "Folders"
-      : shortPath(data.folder.path);
+      : data.k === "chat"
+        ? (data.session.title ?? "Chat")
+        : shortPath(data.folder.path);
+  const contextTitle =
+    data.k === "folders" ? undefined : shortPath(data.folder.path);
   const busy = data.k === "chat" ? data.session.busy : undefined;
 
   const changesBadge: ChangesBadge | undefined =
@@ -109,8 +115,9 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
 
   return (
     <div className="flex h-full flex-col bg-neutral-950">
-      <Header
+      <TopBar
         label={label}
+        title={contextTitle}
         busy={busy}
         home={data.k !== "folders"}
         menuOpen={pickerOpen}
@@ -140,17 +147,23 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
               }
             : undefined
         }
+        tabs={
+          showTabs
+            ? {
+                folder: data.folder.path,
+                activeSessionId:
+                  data.k === "chat" ? data.session.id : data.fromSessionId,
+                active:
+                  data.k === "chat"
+                    ? "chat"
+                    : data.k === "files"
+                      ? "files"
+                      : "changes",
+                changesBadge,
+              }
+            : undefined
+        }
       />
-      {showTabs && (
-        <ChatTabs
-          folder={data.folder.path}
-          activeSessionId={
-            data.k === "chat" ? data.session.id : data.fromSessionId
-          }
-          active={data.k === "chat" ? "chat" : data.k === "files" ? "files" : "changes"}
-          changesBadge={changesBadge}
-        />
-      )}
       <main className="relative min-h-0 flex-1">
         {data.k === "folders" && (
           <FoldersView

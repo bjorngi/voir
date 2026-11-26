@@ -699,7 +699,10 @@ export function ChatView({
           ref={scrollRef}
           className="scrollbar-hide absolute inset-0 overflow-y-auto px-3 py-3 sm:px-4"
         >
-          <div className="mx-auto flex max-w-3xl flex-col gap-3">
+          {/* Reading measure grows with the viewport: 768 → 896 → 1024.
+              Wider than that and lines get hard to track; narrower wastes
+              a laptop screen. */}
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 lg:max-w-4xl 2xl:max-w-5xl">
             {messages.map((m) => (
               <MessageBubble
                 key={m.id}
@@ -766,6 +769,7 @@ export function ChatView({
           onStop={stopPlaying}
         />
       )}
+      <div className="mx-auto w-full max-w-3xl lg:max-w-4xl 2xl:max-w-5xl">
       {voice.active ? (
         /* Voice conversation mode owns the input area: the composer
            is replaced by the voice panel (mic orb, live transcript,
@@ -896,6 +900,7 @@ export function ChatView({
           />
         </>
       )}
+      </div>
     </div>
     </RichContext.Provider>
   );

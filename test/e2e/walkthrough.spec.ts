@@ -267,7 +267,7 @@ test("rich — the content tour renders every module", async ({ page }) => {
   await expectNoHorizontalOverflow(page, "rich content");
 });
 
-test("drawer — model list, vision marker, switch", async ({ page }) => {
+test("model sheet — grip opens it, model switch, vision marker", async ({ page }) => {
   await openSession(
     page,
     SHORT_A,
@@ -275,21 +275,30 @@ test("drawer — model list, vision marker, switch", async ({ page }) => {
     "ACP-compatible coding agents",
   );
 
-  await page
-    .getByRole("button", { name: "Open model, mode and fence" })
-    .click();
-  // The Model select is the first <select> in the drawer (the
-  // drawer's close button also contains the word "model" in its
-  // aria-label, which defeats getByLabel).
-  const model = page.locator("select").first();
+  // The sheet opens from the grip strip under the field (tap; swipe up does
+  // the same). The grip also prints the live model · mode.
+  const grip = page.getByRole("button", { name: "Open model, mode and fence" });
+  await expect(grip).toContainText("cheery-1");
+  await grip.click();
+
+  const sheet = page.getByRole("dialog", { name: "Model, mode and fence" });
+  await expect(sheet).toBeVisible();
+  const model = sheet.locator("select").first();
   await expect(model).toHaveValue("mock/cheery-1");
-  // Cheery is vision-capable — the drawer says so.
+  // Cheery is vision-capable — the sheet says so.
   await expect(page.getByTestId("drawer-vision")).toContainText("Images ✓");
 
+  // Switching a model applies and closes the sheet (the turn is the user's,
+  // not a settings screen to linger in)…
   await model.selectOption("mock/cryptic-2");
-  await expect(model).toHaveValue("mock/cryptic-2");
-  // Cryptic is text-only; the warning flips.
+  await expect(sheet).toHaveCount(0);
+  await expect(grip).toContainText("cryptic-2");
+  // …and the next open shows the agent's truth: cryptic is text-only.
+  await grip.click();
   await expect(page.getByTestId("drawer-vision")).toContainText("Images ✗");
+  // Escape closes it (no ✕ hunting needed).
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Model, mode and fence" })).toHaveCount(0);
 });
 
 test("new chat — empty session takes a first turn", async ({ page }) => {

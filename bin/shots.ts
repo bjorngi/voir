@@ -262,12 +262,16 @@ for (const d of DISPLAYS) {
     await page.getByLabel("Show top bar").click();
     await page.waitForTimeout(250);
 
-    // 4) Drawer open on this chat.
+    // 4) Model sheet open (grip strip → bottom sheet).
     await page
       .getByRole("button", { name: "Open model, mode and fence" })
       .click();
-    await page.waitForTimeout(350);
-    await shot(page, d.id, "chat", "drawer", "Chat — model drawer open", false);
+    await page.waitForTimeout(400);
+    await shot(page, d.id, "chat", "drawer", "Chat — model sheet open", false);
+    // Close it again: the sheet is a modal overlay, so the next steps (menu,
+    // tabs) would be blocked behind it.
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(250);
 
     // 5) Global menu (folder/session switcher).
     await page.getByRole("button", { name: /^(Menu|Close menu)$/ }).click();

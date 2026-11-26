@@ -1,8 +1,8 @@
 {
-  "stamp": "2026-11-26_22-00-33",
+  "stamp": "2026-11-26_22-41-58",
   "commit": {
-    "sha": "96bbe18",
-    "subject": "feat(chat): quieter rail — tools filtered, 3px slit that opens under the finger"
+    "sha": "44f6ce2",
+    "subject": "ci(pages): retry the deploy once when artifact metadata flakes"
   },
   "devices": [
     {
@@ -64,7 +64,7 @@
     },
     {
       "file": "fold-cover-portrait-drawer.webp",
-      "label": "Chat — model drawer open",
+      "label": "Chat — model sheet open",
       "group": "chat",
       "device": "fold-cover-portrait"
     },
@@ -142,7 +142,7 @@
     },
     {
       "file": "fold-cover-landscape-drawer.webp",
-      "label": "Chat — model drawer open",
+      "label": "Chat — model sheet open",
       "group": "chat",
       "device": "fold-cover-landscape"
     },
@@ -220,7 +220,7 @@
     },
     {
       "file": "fold-inner-portrait-drawer.webp",
-      "label": "Chat — model drawer open",
+      "label": "Chat — model sheet open",
       "group": "chat",
       "device": "fold-inner-portrait"
     },
@@ -298,7 +298,7 @@
     },
     {
       "file": "fold-inner-landscape-drawer.webp",
-      "label": "Chat — model drawer open",
+      "label": "Chat — model sheet open",
       "group": "chat",
       "device": "fold-inner-landscape"
     },
@@ -376,7 +376,7 @@
     },
     {
       "file": "laptop-drawer.webp",
-      "label": "Chat — model drawer open",
+      "label": "Chat — model sheet open",
       "group": "chat",
       "device": "laptop"
     },

@@ -19,7 +19,7 @@ import { useVoiceMode } from "~/lib/use-voice";
 import { useVoicePrefs, AUTO_SEND_MS } from "~/lib/voice-settings";
 import { MessageBubble } from "~/components/Message";
 import { Composer } from "~/components/Composer";
-import { ModelDrawer, usePendingSet } from "~/components/ModelDrawer";
+import { ModelSheet, usePendingSet } from "./ModelSheet";
 import { VoicePanel } from "./VoicePanel";
 import { PlaybackPanel } from "./PlaybackPanel";
 import { modelVision } from "~/lib/chat-types";
@@ -93,6 +93,18 @@ export function ChatView({
   const [currentModeId, setCurrentModeId] = useState<string | null>(
     data.currentModeId ?? null,
   );
+  // The grip's status line: which model and mode are live, in short form.
+  // The old ▴ showed nothing; this answers "what am I talking to" at a
+  // glance and makes the strip read as a control rather than decoration.
+  const sheetLabel = [
+    currentModelId?.split("/").pop(),
+    availableModes
+      .find((m) => m.id === currentModeId)
+      ?.name?.toLowerCase(),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   // The supervisor preset (fence command) the agent hosting this
   // chat runs under, and the catalog's other preset names. Both
   // absent for one-shot acp-spawn agents — the drawer omits the
@@ -833,10 +845,9 @@ export function ChatView({
           {(availableModels.length > 0 ||
             availableModes.length > 0 ||
             presetOptions.length > 0) && (
-            <ModelDrawer
+            <ModelSheet
               open={drawerOpen}
               onClose={() => setDrawerOpen(false)}
-              onToggle={() => setDrawerOpen((v) => !v)}
               models={availableModels}
               modes={availableModes}
               presets={presetOptions}
@@ -855,7 +866,7 @@ export function ChatView({
               onPickPreset={async (p) => {
                 setPresetPending(true);
                 try {
-                  await fetch("/api/folders", {
+                  const res = await fetch("/api/folders", {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -864,11 +875,9 @@ export function ChatView({
                       preset: p,
                     }),
                   });
+                  if (!res.ok) throw new Error(`PATCH ${res.status}`);
                   setCurrentPreset(p);
                   setDrawerOpen(false);
-                  // On failure the drawer stays open with the old
-                  // truth; the connection banner (agent leg) and
-                  // the drawer's pending flag are the visible story.
                 } catch {
                   console.warn("fence switch failed");
                 } finally {
@@ -878,14 +887,13 @@ export function ChatView({
               onClearCache={clearAgentCache}
               cacheClearing={cacheClearing}
             />
+
           )}
           <Composer
             folder={folder.path}
             sessionId={initial.id}
-            drawer={{
-              open: drawerOpen,
-              onToggle: () => setDrawerOpen((v) => !v),
-            }}
+            onOpenModelSheet={() => setDrawerOpen(true)}
+            modelLabel={sheetLabel}
             initialAttach={data.attach}
             imageSupported={data.imageSupported}
             currentModelVision={

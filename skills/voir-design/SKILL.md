@@ -95,6 +95,20 @@ disappears reads as a bug.
 
 ## 6. Interaction defaults
 
+- **The composer is one field, not a toolbar.** Paperclip and the
+  send/dictate control live inside the field's border (`pl/pr` reserves their
+  space), so nothing stands beside the input. On the cover pane that is
+  ~54px more text width and two fewer visual controls. The right-hand slot
+  carries three meanings and never collapses — stop while a turn runs, mic
+  when the field is empty and speech is available, send otherwise — so the
+  text width never jumps and dictation stays reachable with an empty field.
+- **Precision controls are gestures with a visible handle.** The model/mode
+  sheet opens from the grip strip under the field: tap or swipe up; it also
+  prints the live model · mode, which the old chevron never showed. The sheet
+  is an overlay, so opening it never reflows the transcript.
+- **Horizontal gestures only where nothing can be selected.** Swipe right on
+  an *empty* field attaches an image; with text present the same drag belongs
+  to the caret. Never capture horizontal drags on a field that has content.
 - **Every action has a visible affordance at every width.** A keyboard
   shortcut may be a convenience; it must never be the only path. (Send was
   `sm:hidden` and three of five displays had no way to send.)

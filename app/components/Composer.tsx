@@ -143,7 +143,8 @@ export function Composer({
   imageSupported = false,
   initialShared,
   currentModelVision,
-  drawer,
+  onOpenModelSheet,
+  modelLabel,
 }: {
   folder: string;
   sessionId: string;
@@ -211,15 +212,23 @@ export function Composer({
    * still matters to the human and models can be switched.
    */
   currentModelVision?: boolean;
-  /** Model/mode/fence drawer toggle. Lives beside the paperclip now:
-   *  it used to own a 28px row above the composer on every chat view. */
-  drawer?: { open: boolean; onToggle: () => void };
+  /** Opens the model/mode/fence sheet from the grip strip under the field.
+   *  The grip is the tap target; swiping up on it does the same. */
+  onOpenModelSheet?: () => void;
+  /** What the grip strip says: the live model (and mode) in short form. */
+  modelLabel?: string | null;
 }) {
   const fetcher = useFetcher<{ error?: string; ok?: boolean }>();
   // Draft key: per folder+session, so switching conversations keeps
   // drafts separate.
   const draftKey = folder + "\n" + sessionId;
   const [text, setText] = useState(() => loadDraft(draftKey)?.text ?? "");
+  // Gesture bookkeeping: the grip's press (model sheet) and a right-swipe
+  // on an EMPTY field (attach). The empty-field condition is what makes the
+  // horizontal gesture safe: with no text there is nothing to select, so
+  // capturing the drag cannot steal caret/selection behaviour.
+  const grip = useRef({ y: 0, active: false });
+  const swipe = useRef({ x: 0, y: 0, active: false });
   const [mentions, setMentions] = useState<Mention[]>(
     () => loadDraft(draftKey)?.mentions ?? [],
   );
@@ -776,7 +785,7 @@ export function Composer({
 
   return (
     <div
-      className="relative shrink-0 border-t border-neutral-800 bg-neutral-950/80 px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2 backdrop-blur"
+      className="relative shrink-0 border-t border-neutral-800 bg-neutral-950/80 px-2 pb-[max(env(safe-area-inset-bottom),0.25rem)] pt-1.5 backdrop-blur"
       onDragOver={(e) => {
         if (imageSupported && e.dataTransfer.types.includes("Files")) {
           e.preventDefault();
@@ -1009,7 +1018,16 @@ export function Composer({
           (it auto-grows with `field-sizing: content`) and the controls
           sit beside it. items-end keeps SEND on the text baseline as the
           field grows. */}
-      <div className="flex items-end gap-2">
+      {/* One bordered field, controls inside it. The paperclip and the
+          send/dictate control live in the field's own padding instead of
+          standing beside it as buttons: on the fold that is ~70px of extra
+          text width and two fewer things competing with the message. */}
+      <div
+        className={
+          "flex items-end gap-1 border border-neutral-800 bg-neutral-900 transition-colors focus-within:border-neutral-600 " +
+          (flash ? "ring-2 ring-amber-400/50" : "")
+        }
+      >
         <textarea
           ref={ref}
           value={text}
@@ -1022,6 +1040,21 @@ export function Composer({
             if (files.length === 0) return;
             e.preventDefault();
             void attachImages(files);
+          }}
+          onPointerDown={(e) => {
+            if (!imageSupported || text.trim().length > 0) return;
+            swipe.current = { x: e.clientX, y: e.clientY, active: true };
+          }}
+          onPointerUp={(e) => {
+            if (!swipe.current.active) return;
+            swipe.current.active = false;
+            const dx = e.clientX - swipe.current.x;
+            const dy = Math.abs(e.clientY - swipe.current.y);
+            // Right, deliberate, and not a vertical scroll/caret drag.
+            if (dx > 48 && dy < 28) fileInputRef.current?.click();
+          }}
+          onPointerCancel={() => {
+            swipe.current.active = false;
           }}
           onKeyDown={(e) => {
             if (showAnyMenu) {
@@ -1081,10 +1114,7 @@ export function Composer({
                 : `Message…  (@ attach, / commands, ${coarse ? "hold Send to dictate" : "⌘+Enter to send"})`
           }
           className={
-            "scrollbar-hide composer-textarea min-h-11 min-w-0 flex-1 resize-none border border-neutral-800 bg-neutral-900 px-4 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none focus:border-neutral-600 " +
-            // A ring rather than a border so the flash doesn't
-            // fight the focus style — it shows while focused.
-            (flash ? "ring-2 ring-amber-400/50" : "")
+            "scrollbar-hide composer-textarea min-h-11 min-w-0 flex-1 resize-none border-0 bg-transparent px-2 py-2.5 font-mono text-[14px] text-neutral-100 placeholder-neutral-500 outline-none"
           }
         />
         <div className="flex shrink-0 items-stretch gap-2">
@@ -1094,28 +1124,6 @@ export function Composer({
               agents that can't take images. The hidden input
               must stay outside the sm:contents row to avoid
               participating in the desktop layout. */}
-          {drawer && (
-            <button
-              type="button"
-              onClick={drawer.onToggle}
-              aria-expanded={drawer.open}
-              aria-label={
-                drawer.open
-                  ? "Close model, mode and fence"
-                  : "Open model, mode and fence"
-              }
-              title={
-                drawer.open
-                  ? "Close model, mode and fence"
-                  : "Model, mode and fence"
-              }
-              className="inline-flex h-11 w-9 shrink-0 items-center justify-center border border-neutral-700 bg-transparent text-neutral-400 transition-colors active:bg-white/10 hover:text-neutral-200"
-            >
-              <span aria-hidden="true" className="font-mono text-[13px] leading-none">
-                {drawer.open ? "▾" : "▴"}
-              </span>
-            </button>
-          )}
           {imageSupported && (
             <>
               <input
@@ -1136,7 +1144,7 @@ export function Composer({
                 onClick={() => fileInputRef.current?.click()}
                 aria-label="Attach images"
                 title="Attach images (or paste/drop them)"
-                className="h-11 w-11 shrink-0 border border-neutral-700 bg-transparent text-neutral-400 transition-colors active:bg-white/10 sm:flex-none"
+                className="order-first inline-flex h-11 w-9 shrink-0 items-center justify-center text-neutral-500 transition-colors active:bg-white/10 hover:text-neutral-200"
               >
                 <svg
                   width="18"
@@ -1155,67 +1163,122 @@ export function Composer({
               </button>
             </>
           )}
-          {busy && (
-            <button
-              type="button"
-              onClick={onCancel}
-              className="h-11 shrink-0 border border-rose-400/60 bg-transparent px-3 text-xs font-semibold uppercase tracking-wider text-rose-300 transition-colors active:bg-rose-500/10 sm:px-5 sm:text-sm"
-              title="Stop the current turn and clear queued messages (Esc)"
-            >
-              Stop
-            </button>
-          )}
-          {/* Hold-to-talk lives on Send: press-and-hold (≥250ms)
-              starts dictation (if the browser supports STT), release
-              stops it and the transcript becomes a reviewable draft;
-              a short press sends as before. Never `disabled` —
-              pointer events must flow for the hold gesture — so the
-              empty state dims via classes instead. */}
+          {/* One control, three meanings — it is the only thing to the
+              right of the text now, so it must always be useful:
+                busy        → stop (cancel the turn)
+                empty + mic → hold to talk (dictation)
+                otherwise   → send (hold also dictates)
+              The slot never collapses, so the text width does not jump
+              when the first character arrives. */}
           <button
             type="button"
             onPointerDown={onSendPointerDown}
             onPointerUp={onSendPointerUp}
             onPointerCancel={onSendPointerCancel}
             onContextMenu={(e) => {
-              // Long-press otherwise pops text-selection/callout UI
-              // over the dictation overlay on Android.
+              // Long-press otherwise pops text-selection/callout UI over
+              // the dictation overlay on Android.
               if (mic.supported) e.preventDefault();
             }}
             onClick={(e) => {
-              // Pointer paths send on pointerup; keyboard activation
-              // (Tab + Enter/Space) goes through click with detail 0.
-              if (e.detail === 0) send();
+              // Pointer paths act on pointerup; keyboard activation
+              // (Tab + Enter/Space) arrives as a click with detail 0.
+              if (e.detail !== 0) return;
+              if (busy) onCancel?.();
+              else send();
             }}
-            aria-label={dictating ? "Dictating — release to insert" : "Send message — hold to dictate"}
-            className={
-              // Visible at every width: on a phone it is the primary
-              // action, on the fold's landscape pane (657px) and on a
-              // laptop it is the only visible one — the shortcut hint is
-              // a convenience, never the sole path.
-              "h-11 flex-1 select-none border px-5 text-sm font-semibold uppercase tracking-wider [touch-action:manipulation] transition-colors active:bg-white/10 sm:flex-none " +
-              (dictating
-                ? "border-amber-400/70 bg-transparent text-amber-300 animate-pulse"
+            aria-label={
+              dictating
+                ? "Dictating — release to insert"
                 : busy
-                  ? "border-amber-400/70 bg-transparent text-amber-300"
+                  ? "Stop the current turn and clear queued messages"
+                  : mic.supported && !text.trim()
+                    ? "Hold to dictate a message"
+                    : "Send message — hold to dictate"
+            }
+            title={
+              busy
+                ? "Stop the current turn and clear queued messages (Esc)"
+                : mic.supported && !text.trim()
+                  ? "Hold to talk, or type a message"
+                  : "Send (hold to dictate)"
+            }
+            className={
+              "inline-flex h-11 w-11 shrink-0 select-none items-center justify-center transition-colors [touch-action:manipulation] active:bg-white/10 " +
+              (dictating
+                ? "animate-pulse text-amber-300"
+                : busy
+                  ? "text-rose-300"
                   : text.trim() || mentions.length > 0 || uploadedImages.length > 0
-                    ? "border-white bg-transparent text-white"
-                    : "border-neutral-700 bg-transparent text-neutral-600 active:bg-transparent")
-          }
+                    ? "text-white"
+                    : mic.supported
+                      ? "text-neutral-400"
+                      : "text-neutral-600")
+            }
           >
-            {compact && !dictating ? (
-              <span aria-hidden="true" className="text-base leading-none">
-                ↑
+            {dictating ? (
+              <span className="font-mono text-[11px] uppercase tracking-wider">
+                {committed ? "✓" : "…"}
               </span>
-            ) : dictating ? (
-              committed ? "Inserted ✓" : "Listening…"
             ) : busy ? (
-              "Queue"
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="5" y="5" width="14" height="14" rx="1.5" />
+              </svg>
+            ) : mic.supported && !text.trim() ? (
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+                <line x1="12" y1="18" x2="12" y2="22" />
+              </svg>
             ) : (
-              "Send"
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="12" y1="19" x2="12" y2="5" />
+                <polyline points="6 11 12 5 18 11" />
+              </svg>
             )}
           </button>
         </div>
-    </div>
+      </div>
+      {/* Grip strip: the tap target for the model sheet and the gesture
+            surface for it (swipe up). It doubles as the status line — which
+            model and mode are live — information the old ▴ never showed.
+            It sits in the composer's bottom padding, so it costs ~10px. */}
+        {onOpenModelSheet && (
+          <div className="flex justify-center pt-0.5">
+            <button
+              type="button"
+              onClick={onOpenModelSheet}
+              onPointerDown={(e) => {
+                grip.current = { y: e.clientY, active: true };
+                (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              }}
+              onPointerUp={(e) => {
+                if (!grip.current.active) return;
+                grip.current.active = false;
+                // Swipe up (≥18px) or a plain tap both open the sheet.
+                void e;
+                onOpenModelSheet();
+              }}
+              onPointerCancel={() => {
+                grip.current.active = false;
+              }}
+              aria-label="Open model, mode and fence"
+              aria-expanded={false}
+              title="Model, mode and fence — tap or swipe up"
+              className="group flex items-center gap-2 rounded px-3 py-0.5 active:bg-white/5"
+            >
+              <span
+                aria-hidden
+                className="h-[3px] w-7 rounded-full bg-neutral-700 transition-colors group-hover:bg-neutral-500"
+              />
+              {modelLabel && (
+                <span className="font-mono text-[9px] leading-none text-neutral-600 transition-colors group-hover:text-neutral-400">
+                  {modelLabel}
+                </span>
+              )}
+            </button>
+          </div>
+      )}
     </div>
   );
 }

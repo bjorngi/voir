@@ -135,3 +135,21 @@ function describeNonError(error: unknown): Error {
   }
   return new Error(String(error));
 }
+/**
+ * Timing for things only the browser can see: how long a view took to
+ * become useful, measured from navigation start. Faro stores these as
+ * measurements alongside the web vitals, so "the app feels slow with a
+ * lot of sessions" becomes a queryable series (`voir.view.open` by
+ * `view`) instead of an impression.
+ *
+ * Safe to call anywhere: before initFaro() the proxy's api is a no-op.
+ */
+export function measureView(view: string, extra?: Record<string, string>) {
+  if (typeof performance === "undefined") return;
+  const value = Math.round(performance.now());
+  faro.api.pushMeasurement({
+    type: "voir.view.open",
+    values: { ms: value },
+    context: { view, ...(extra ?? {}) },
+  });
+}

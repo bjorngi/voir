@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Voir — visual review 2026-11-26_20-02-09</title>
+<title>Voir — visual review 2026-11-26_20-27-31</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -15,6 +15,8 @@
   header code { color: #737373; font-size: 12px; }
   header .count { margin-left: auto; color: #a3a3a3; font-size: 12px;
     font-family: ui-monospace, monospace; }
+  header .hint { color: #525252; font-family: ui-monospace, monospace;
+    font-size: 11px; }
   section { padding: 20px; }
   h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
     color: #737373; margin: 0 0 14px; font-weight: 500; }
@@ -31,8 +33,6 @@
   .chat figure img, .rich figure img, .tabs figure img { max-height: 620px;
     object-fit: cover; object-position: top; }
   a { color: inherit; }
-  header .hint { color: #525252; font-family: ui-monospace, monospace;
-    font-size: 11px; }
   .thumb { display: block; width: 100%; padding: 0; border: 0; background: none;
     cursor: zoom-in; }
   .thumb:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
@@ -63,9 +63,9 @@
 <body>
 <header>
   <h1>Voir — visual review</h1>
-  <code>2026-11-26_20-02-09</code>
-  <code title="feat(ui): seven space savings for the fold — transcript 68% → 83%">@ 923f88b</code>
-  <span class="count">65 shots · 5 displays</span>
+  <code>2026-11-26_20-27-31</code>
+  <code title="feat(pwa): true fullscreen where supported, and the insets it needs">@ e402534</code>
+  <span class="count">65 shots · 5 devices</span>
   <span class="hint">click a shot to browse · ← → · Esc</span>
 </header>
 
@@ -762,8 +762,8 @@
 </div>
 <script>
 // Lightbox: click a shot to open, ←/→ (and swipe) to walk the whole
-// review, Esc to close. Order follows the page: every view of display 1,
-// then display 2, then 3 — so a redesign can be reviewed as one sequence.
+// review, Esc to close. Order follows the page: every view of device 1,
+// then device 2, then 3 — so a redesign can be reviewed as one sequence.
 (() => {
   const shots = Array.from(document.querySelectorAll("figure.shot"));
   const lb = document.getElementById("lb");
@@ -784,7 +784,6 @@
       (section ? " · " + (section.dataset.title || "") : "");
     lb.hidden = false;
     document.body.style.overflow = "hidden";
-    // Warm the neighbours so arrow-key browsing feels instant.
     for (const d of [-1, 1]) {
       const n2 = (i + d + shots.length) % shots.length;
       const pre = new Image();
@@ -816,7 +815,6 @@
     else if (e.key === "End") { e.preventDefault(); show(shots.length - 1); }
   });
 
-  // Touch: horizontal swipe moves through the sequence.
   let x0 = null;
   lb.addEventListener("touchstart", (e) => { x0 = e.touches[0].clientX; },
     { passive: true });

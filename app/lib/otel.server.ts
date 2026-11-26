@@ -23,7 +23,15 @@ import { BatchSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
-import type { Tracer, TextMapPropagator } from "@opentelemetry/api";
+import {
+  context,
+  trace,
+  SpanStatusCode,
+  type Attributes,
+  type Span,
+  type Tracer,
+  type TextMapPropagator,
+} from "@opentelemetry/api";
 
 // NOTE on env timing: bin/server.ts loads .env in its module BODY (after all
 // static imports evaluate), so env-dependent state must be read lazily —
@@ -81,3 +89,41 @@ export function otelTracer(): Tracer | undefined {
 // NOT join). This module deliberately stays off the api globals.
 const propagator = new W3CTraceContextPropagator();
 export const tracePropagator: TextMapPropagator = propagator;
+/**
+ * Time one unit of work as a child of the request span.
+ *
+ * Why spans rather than counters: the estate's Grafana stores timings in
+ * Tempo, and the metrics-generator turns span *durations* into Prometheus
+ * series (spanmetrics), so a well-named span is a latency histogram with a
+ * trace attached — no metrics SDK, no second pipeline, and any slow sample
+ * can be opened and read.
+ *
+ * Naming matters: spanmetrics keys on `span_name`, so use a stable,
+ * low-cardinality name (`voir.sessions.list`), never ids.
+ *
+ * Tracing off (no OTLP endpoint) → the function is a passthrough with no
+ * allocation. Errors are recorded on the span and re-thrown unchanged.
+ */
+export async function withSpan<T>(
+  name: string,
+  attributes: Attributes,
+  fn: (span: Span | undefined) => Promise<T> | T,
+): Promise<T> {
+  const tracer = otelTracer();
+  if (!tracer) return await fn(undefined);
+  return await tracer.startActiveSpan(name, async (span) => {
+    try {
+      span.setAttributes(attributes);
+      const result = await fn(span);
+      return result;
+    } catch (err) {
+      span.setStatus({
+        code: SpanStatusCode.ERROR,
+        message: (err as Error)?.message ?? String(err),
+      });
+      throw err;
+    } finally {
+      span.end();
+    }
+  });
+}

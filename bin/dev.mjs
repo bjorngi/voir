@@ -32,6 +32,8 @@
 //   --port <n>     web port (default 9000; bridges pick free ports)
 //   --no-web       only start the mock bridges (you run vite yourself)
 //   --no-mocks     only start the web server
+//   --telemetry    keep the real faro/OTLP endpoints (default: blanked,
+//                  so a mock run never ships spans to the estate stack)
 //   --fresh        wipe the runtime state dir first (session-status
 //                  overlay, uploads, search index) so the stack boots
 //                  from the seeded baseline — used by test:e2e, where
@@ -60,15 +62,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ── args ────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const opts = { port: 9000, web: true, mocks: true, fresh: false };
+  const opts = { port: 9000, web: true, mocks: true, fresh: false, telemetry: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--port") opts.port = Number(argv[++i]);
+    else if (a === "--telemetry") opts.telemetry = true;
     else if (a === "--no-web") opts.web = false;
     else if (a === "--no-mocks") opts.mocks = false;
     else if (a === "--fresh") opts.fresh = true;
     else if (a === "-h" || a === "--help") {
-      console.log(`Usage: node bin/dev.mjs [--port <n>] [--no-web] [--no-mocks] [--fresh]
+      console.log(`Usage: node bin/dev.mjs [--port <n>] [--no-web] [--no-mocks] [--fresh] [--telemetry]
 
 Starts the Voir dev server plus two mock ACP agents (project-a,
 project-b) pre-seeded with distinct session sets. VOIR_DATA_DIR
@@ -122,9 +125,15 @@ mkdirSync(DATA_DIR, { recursive: true });
 // the blocked beacon). Empty string, not "false": these are
 // read as strings (faro.ts: `if (!import.meta.env…)`), where
 // "false" is still truthy.
-process.env.VITE_FARO_ENABLED = "";
-process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "";
-process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "";
+if (!opts.telemetry) {
+  process.env.VITE_FARO_ENABLED = "";
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "";
+  process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "";
+} else {
+  console.log(
+    "[dev] --telemetry: shipping faro/OTLP to the configured estate endpoints",
+  );
+}
 
 function materializeWorktree(fixture) {
   const src = join(ROOT, "dev-data", fixture.dir);

@@ -255,6 +255,14 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
 // Sub-views
 // -----------------------------------------------------------------------
 
+/** How much the view had to render — the x-axis that makes a timing
+ *  series readable ("open home" is slow at 40 folders, fine at 4). */
+function viewSize(data: ChatLoaderData): number {
+  if (data.k === "folders") return data.tree.length;
+  if (data.k === "sessions") return data.sessions.length;
+  return 0;
+}
+
 function FoldersView({
   data,
   activeRows,
@@ -305,6 +313,21 @@ function SessionsView({
   const [overrides, setOverrides] = useState<
     Record<string, SessionStatus | "none">
   >({});
+  // Perceived load time per view, measured from navigation start to the
+  // first paint after the view's data rendered. `view` is the loader's
+  // discriminator (folders | sessions | chat | files | changes).
+  const view = data.k;
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      void import("~/faro").then(({ measureView }) =>
+        // Sizes are what make the timing interpretable: the same
+        // milliseconds mean different things at 5 folders and 500.
+        measureView(view, { size: String(viewSize(data)) }),
+      );
+    });
+    return () => cancelAnimationFrame(id);
+  }, [view, data]);
+
   // "Show archived" is per-view ephemeral state (docs/
   // session-status.md): hidden must be the honest default on
   // every visit, so it is component state, not a query param.

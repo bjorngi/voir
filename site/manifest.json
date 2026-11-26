@@ -1,396 +1,426 @@
 {
-  "stamp": "2026-11-26_20-02-09",
-  "target": "http://127.0.0.1:9300",
+  "stamp": "2026-11-26_20-27-31",
+  "commit": {
+    "sha": "e402534",
+    "subject": "feat(pwa): true fullscreen where supported, and the insets it needs"
+  },
+  "devices": [
+    {
+      "id": "fold-cover-portrait",
+      "label": "Fold 8 — cover (portrait)",
+      "note": "416 × 657 CSS · 5.5″ 10:16"
+    },
+    {
+      "id": "fold-cover-landscape",
+      "label": "Fold 8 — cover (landscape)",
+      "note": "657 × 416 CSS · 5.5″ 16:10 held sideways"
+    },
+    {
+      "id": "fold-inner-portrait",
+      "label": "Fold 8 — inner (portrait)",
+      "note": "609 × 816 CSS · 7.6″ 3:4 upright"
+    },
+    {
+      "id": "fold-inner-landscape",
+      "label": "Fold 8 — inner (landscape)",
+      "note": "816 × 609 CSS · 7.6″ 4:3 opened flat"
+    },
+    {
+      "id": "laptop",
+      "label": "Laptop — MacBook Pro 16\"",
+      "note": "1728 × 1117 CSS · 16.2″ 16:10, default scaled"
+    }
+  ],
   "shots": [
     {
       "file": "fold-cover-portrait-home.webp",
       "label": "Home — Working on + folders",
-      "viewport": "fold-cover-portrait",
-      "group": "home"
+      "group": "home",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-folder-a.webp",
       "label": "Folder A — session list",
-      "viewport": "fold-cover-portrait",
-      "group": "folder"
+      "group": "folder",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-chat-bottom.webp",
       "label": "Chat — What is Voir? (bottom)",
-      "viewport": "fold-cover-portrait",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-chat-top.webp",
       "label": "Chat — What is Voir? (top)",
-      "viewport": "fold-cover-portrait",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-bar-hidden.webp",
       "label": "Chat — top bar hidden",
-      "viewport": "fold-cover-portrait",
-      "group": "chrome"
+      "group": "chrome",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-drawer.webp",
       "label": "Chat — model drawer open",
-      "viewport": "fold-cover-portrait",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-picker.webp",
       "label": "Global menu open",
-      "viewport": "fold-cover-portrait",
-      "group": "nav"
+      "group": "nav",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-rich-top.webp",
       "label": "Rich content — mermaid/chart/table/card",
-      "viewport": "fold-cover-portrait",
-      "group": "rich"
+      "group": "rich",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-rich-bottom.webp",
       "label": "Rich content — d3 + sandboxed html",
-      "viewport": "fold-cover-portrait",
-      "group": "rich"
+      "group": "rich",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-files.webp",
       "label": "Files tab",
-      "viewport": "fold-cover-portrait",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-changes.webp",
       "label": "Changes tab (diff)",
-      "viewport": "fold-cover-portrait",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-folder-b.webp",
       "label": "Folder B — session list",
-      "viewport": "fold-cover-portrait",
-      "group": "folder"
+      "group": "folder",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-portrait-chat-b.webp",
       "label": "Chat (folder B) — Parse CSV edge cases",
-      "viewport": "fold-cover-portrait",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-cover-portrait"
     },
     {
       "file": "fold-cover-landscape-home.webp",
       "label": "Home — Working on + folders",
-      "viewport": "fold-cover-landscape",
-      "group": "home"
+      "group": "home",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-folder-a.webp",
       "label": "Folder A — session list",
-      "viewport": "fold-cover-landscape",
-      "group": "folder"
+      "group": "folder",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-chat-bottom.webp",
       "label": "Chat — What is Voir? (bottom)",
-      "viewport": "fold-cover-landscape",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-chat-top.webp",
       "label": "Chat — What is Voir? (top)",
-      "viewport": "fold-cover-landscape",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-bar-hidden.webp",
       "label": "Chat — top bar hidden",
-      "viewport": "fold-cover-landscape",
-      "group": "chrome"
+      "group": "chrome",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-drawer.webp",
       "label": "Chat — model drawer open",
-      "viewport": "fold-cover-landscape",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-picker.webp",
       "label": "Global menu open",
-      "viewport": "fold-cover-landscape",
-      "group": "nav"
+      "group": "nav",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-rich-top.webp",
       "label": "Rich content — mermaid/chart/table/card",
-      "viewport": "fold-cover-landscape",
-      "group": "rich"
+      "group": "rich",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-rich-bottom.webp",
       "label": "Rich content — d3 + sandboxed html",
-      "viewport": "fold-cover-landscape",
-      "group": "rich"
+      "group": "rich",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-files.webp",
       "label": "Files tab",
-      "viewport": "fold-cover-landscape",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-changes.webp",
       "label": "Changes tab (diff)",
-      "viewport": "fold-cover-landscape",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-folder-b.webp",
       "label": "Folder B — session list",
-      "viewport": "fold-cover-landscape",
-      "group": "folder"
+      "group": "folder",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-cover-landscape-chat-b.webp",
       "label": "Chat (folder B) — Parse CSV edge cases",
-      "viewport": "fold-cover-landscape",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-cover-landscape"
     },
     {
       "file": "fold-inner-portrait-home.webp",
       "label": "Home — Working on + folders",
-      "viewport": "fold-inner-portrait",
-      "group": "home"
+      "group": "home",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-folder-a.webp",
       "label": "Folder A — session list",
-      "viewport": "fold-inner-portrait",
-      "group": "folder"
+      "group": "folder",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-chat-bottom.webp",
       "label": "Chat — What is Voir? (bottom)",
-      "viewport": "fold-inner-portrait",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-chat-top.webp",
       "label": "Chat — What is Voir? (top)",
-      "viewport": "fold-inner-portrait",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-bar-hidden.webp",
       "label": "Chat — top bar hidden",
-      "viewport": "fold-inner-portrait",
-      "group": "chrome"
+      "group": "chrome",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-drawer.webp",
       "label": "Chat — model drawer open",
-      "viewport": "fold-inner-portrait",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-picker.webp",
       "label": "Global menu open",
-      "viewport": "fold-inner-portrait",
-      "group": "nav"
+      "group": "nav",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-rich-top.webp",
       "label": "Rich content — mermaid/chart/table/card",
-      "viewport": "fold-inner-portrait",
-      "group": "rich"
+      "group": "rich",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-rich-bottom.webp",
       "label": "Rich content — d3 + sandboxed html",
-      "viewport": "fold-inner-portrait",
-      "group": "rich"
+      "group": "rich",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-files.webp",
       "label": "Files tab",
-      "viewport": "fold-inner-portrait",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-changes.webp",
       "label": "Changes tab (diff)",
-      "viewport": "fold-inner-portrait",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-folder-b.webp",
       "label": "Folder B — session list",
-      "viewport": "fold-inner-portrait",
-      "group": "folder"
+      "group": "folder",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-portrait-chat-b.webp",
       "label": "Chat (folder B) — Parse CSV edge cases",
-      "viewport": "fold-inner-portrait",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-inner-portrait"
     },
     {
       "file": "fold-inner-landscape-home.webp",
       "label": "Home — Working on + folders",
-      "viewport": "fold-inner-landscape",
-      "group": "home"
+      "group": "home",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-folder-a.webp",
       "label": "Folder A — session list",
-      "viewport": "fold-inner-landscape",
-      "group": "folder"
+      "group": "folder",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-chat-bottom.webp",
       "label": "Chat — What is Voir? (bottom)",
-      "viewport": "fold-inner-landscape",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-chat-top.webp",
       "label": "Chat — What is Voir? (top)",
-      "viewport": "fold-inner-landscape",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-bar-hidden.webp",
       "label": "Chat — top bar hidden",
-      "viewport": "fold-inner-landscape",
-      "group": "chrome"
+      "group": "chrome",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-drawer.webp",
       "label": "Chat — model drawer open",
-      "viewport": "fold-inner-landscape",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-picker.webp",
       "label": "Global menu open",
-      "viewport": "fold-inner-landscape",
-      "group": "nav"
+      "group": "nav",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-rich-top.webp",
       "label": "Rich content — mermaid/chart/table/card",
-      "viewport": "fold-inner-landscape",
-      "group": "rich"
+      "group": "rich",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-rich-bottom.webp",
       "label": "Rich content — d3 + sandboxed html",
-      "viewport": "fold-inner-landscape",
-      "group": "rich"
+      "group": "rich",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-files.webp",
       "label": "Files tab",
-      "viewport": "fold-inner-landscape",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-changes.webp",
       "label": "Changes tab (diff)",
-      "viewport": "fold-inner-landscape",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-folder-b.webp",
       "label": "Folder B — session list",
-      "viewport": "fold-inner-landscape",
-      "group": "folder"
+      "group": "folder",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "fold-inner-landscape-chat-b.webp",
       "label": "Chat (folder B) — Parse CSV edge cases",
-      "viewport": "fold-inner-landscape",
-      "group": "chat"
+      "group": "chat",
+      "device": "fold-inner-landscape"
     },
     {
       "file": "laptop-home.webp",
       "label": "Home — Working on + folders",
-      "viewport": "laptop",
-      "group": "home"
+      "group": "home",
+      "device": "laptop"
     },
     {
       "file": "laptop-folder-a.webp",
       "label": "Folder A — session list",
-      "viewport": "laptop",
-      "group": "folder"
+      "group": "folder",
+      "device": "laptop"
     },
     {
       "file": "laptop-chat-bottom.webp",
       "label": "Chat — What is Voir? (bottom)",
-      "viewport": "laptop",
-      "group": "chat"
+      "group": "chat",
+      "device": "laptop"
     },
     {
       "file": "laptop-chat-top.webp",
       "label": "Chat — What is Voir? (top)",
-      "viewport": "laptop",
-      "group": "chat"
+      "group": "chat",
+      "device": "laptop"
     },
     {
       "file": "laptop-bar-hidden.webp",
       "label": "Chat — top bar hidden",
-      "viewport": "laptop",
-      "group": "chrome"
+      "group": "chrome",
+      "device": "laptop"
     },
     {
       "file": "laptop-drawer.webp",
       "label": "Chat — model drawer open",
-      "viewport": "laptop",
-      "group": "chat"
+      "group": "chat",
+      "device": "laptop"
     },
     {
       "file": "laptop-picker.webp",
       "label": "Global menu open",
-      "viewport": "laptop",
-      "group": "nav"
+      "group": "nav",
+      "device": "laptop"
     },
     {
       "file": "laptop-rich-top.webp",
       "label": "Rich content — mermaid/chart/table/card",
-      "viewport": "laptop",
-      "group": "rich"
+      "group": "rich",
+      "device": "laptop"
     },
     {
       "file": "laptop-rich-bottom.webp",
       "label": "Rich content — d3 + sandboxed html",
-      "viewport": "laptop",
-      "group": "rich"
+      "group": "rich",
+      "device": "laptop"
     },
     {
       "file": "laptop-files.webp",
       "label": "Files tab",
-      "viewport": "laptop",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "laptop"
     },
     {
       "file": "laptop-changes.webp",
       "label": "Changes tab (diff)",
-      "viewport": "laptop",
-      "group": "tabs"
+      "group": "tabs",
+      "device": "laptop"
     },
     {
       "file": "laptop-folder-b.webp",
       "label": "Folder B — session list",
-      "viewport": "laptop",
-      "group": "folder"
+      "group": "folder",
+      "device": "laptop"
     },
     {
       "file": "laptop-chat-b.webp",
       "label": "Chat (folder B) — Parse CSV edge cases",
-      "viewport": "laptop",
-      "group": "chat"
+      "group": "chat",
+      "device": "laptop"
     }
   ]
 }

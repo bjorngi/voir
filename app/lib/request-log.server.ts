@@ -17,6 +17,8 @@
 // gets app_name="voir" from the pod label via the alloy pod-log relabel.
 import {
   ROOT_CONTEXT,
+  context,
+  trace,
   SpanKind,
   SpanStatusCode,
   defaultTextMapGetter,
@@ -95,5 +97,13 @@ export function requestLog(req: Request, res: Response, next: NextFunction) {
         : {}),
     });
   });
-  next();
+  // Run the handler INSIDE the span's context. Without this the span is
+  // only a parent in name: the session manager's child spans (list RPC,
+  // replay, prompt) would start fresh traces, because this module
+  // deliberately does not touch the api package's global context manager.
+  if (span) {
+    context.with(trace.setSpan(context.active(), span), () => next());
+  } else {
+    next();
+  }
 }

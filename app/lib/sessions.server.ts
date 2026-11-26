@@ -5,6 +5,7 @@ import {
   type SessionUpdate,
 } from "./acp-client.server";
 import { capture as captureTimeline } from "./timeline.server";
+import { withSpan } from "./otel.server";
 import { sessionStatusStore } from "./session-status.server";
 import {
   rewriteImageMarkers,
@@ -588,6 +589,7 @@ class SessionManager {
     // listSessions) needs the session registered up front.
     state.sessions.set(sessionId, session);
     state.activeSessionId = sessionId;
+    const replayStarted = Date.now();
     try {
       const res = await client.loadSession(sessionId, state.path);
       this.applySessionCapabilities(state, res);
@@ -615,6 +617,16 @@ class SessionManager {
     // still mid-turn, live chunks arriving after the boundary
     // re-claim it.
     this.clearInferredBusy(session);
+    // How expensive was opening this conversation? Replay size and wall
+    // time are the two numbers behind "the chat takes a while to open".
+    await withSpan(
+      "voir.sessions.load",
+      {
+        "voir.messages": session.messages.length,
+        "voir.ms": Date.now() - replayStarted,
+      },
+      () => {},
+    );
     // The replay is the complete transcript — index it. The
     // standard debounce (not 0): the write reads session.messages
     // LIVE at write time, and the replay race above can return
@@ -670,6 +682,7 @@ class SessionManager {
         `Unknown folder ${folder}. Register it first (POST /api/folders).`,
       );
     }
+    const listStarted = Date.now();
     const merged = new Map<string, SessionState>();
     // Ids known to exist agent-side, for pruning the status
     // store — the one removal the store trusts (docs/
@@ -733,9 +746,24 @@ class SessionManager {
     ) {
       sessionStatusStore.prune(folder, known);
     }
-    return Array.from(merged.values()).sort(
+    const answer = Array.from(merged.values()).sort(
       (a, b) => b.createdAt - a.createdAt,
     );
+    // The list is the hot path people feel ("slow with lots of
+    // sessions"): record the answer's size next to how long it took, so
+    // the Grafana side can tell a big fleet from a stalled agent.
+    await withSpan(
+      "voir.sessions.list",
+      {
+        "voir.folders": agents.length,
+        "voir.sessions": answer.length,
+        "voir.stubs": answer.filter((x) => x.stub).length,
+        "voir.ms": Date.now() - listStarted,
+        "voir.cache.ttl_ms": listCacheTtlMs(),
+      },
+      () => {},
+    );
+    return answer;
   }
 
   getSession(folder: string, sessionId: string): SessionState | undefined {
@@ -800,10 +828,18 @@ class SessionManager {
     const hit = this.listCache.get(key);
     if (hit) {
       if (Date.now() - hit.at < listCacheTtlMs()) {
-        return Promise.resolve(hit.list);
+        return withSpan(
+          "voir.sessions.list.cache",
+          { "voir.cache": "fresh", "voir.cache.age_ms": Date.now() - hit.at },
+          () => hit.list,
+        );
       }
       this.refreshList(state, key).catch(() => {});
-      return Promise.resolve(hit.list);
+      return withSpan(
+        "voir.sessions.list.cache",
+        { "voir.cache": "stale", "voir.cache.age_ms": Date.now() - hit.at },
+        () => hit.list,
+      );
     }
     return this.refreshList(state, key);
   }
@@ -815,13 +851,31 @@ class SessionManager {
     key: string,
   ): Promise<SessionListEntry[]> {
     const inflight = this.listInFlight.get(key);
-    if (inflight) return inflight;
+    if (inflight) {
+      // Shared round-trip: count it, so a slow list that many requests
+      // waited on is visible as such rather than as N slow requests.
+      return withSpan(
+        "voir.sessions.list.cache",
+        { "voir.cache": "shared" },
+        () => inflight,
+      );
+    }
+    const started = Date.now();
     const p = this.requireClient(state)
       .listSessions(state.path)
       .then((list) => {
         this.listInFlight.delete(key);
         this.listCache.set(key, { at: Date.now(), list });
-        return list;
+        return withSpan(
+          "voir.sessions.list.rpc",
+          {
+            "voir.cache": "cold",
+            "voir.rpc": "session/list",
+            "voir.sessions": list.length,
+            "voir.ms": Date.now() - started,
+          },
+          () => list,
+        );
       })
       .catch((err: unknown) => {
         this.listInFlight.delete(key);
@@ -963,6 +1017,7 @@ class SessionManager {
       // restarted since we last used it), session/load it back in
       // and retry once. If that still fails, give up with a clear
       // error in the chat.
+      const promptStarted = Date.now();
       let res: { stopReason: string };
       try {
         res = await client.prompt(session.id, content);
@@ -979,6 +1034,16 @@ class SessionManager {
           throw err;
         }
       }
+      await withSpan(
+        "voir.sessions.prompt",
+        {
+          "voir.blocks": content.length,
+          "voir.queue_depth": session.inFlightPrompts ?? 0,
+          "voir.ms": Date.now() - promptStarted,
+          "voir.stop_reason": res.stopReason,
+        },
+        () => {},
+      );
       const sysMsg: ChatMessage = {
         id: cryptoRandom(),
         role: "system",

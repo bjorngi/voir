@@ -750,6 +750,14 @@ export function Composer({
         action: sessionUrl(folder, sessionId),
       },
     );
+    // On touch devices the keyboard must go away after sending: the
+    // transcript is what the user wants to read, and a phone keyboard
+    // covers half of it. SEND cannot rely on the tap moving focus — its
+    // pointerdown preventDefaults (so the hold-to-dictate gesture does
+    // not steal focus), which left the caret — and the keyboard — in the
+    // textarea forever. Blur explicitly; desktop keeps focus so the next
+    // message can be typed straight away.
+    if (coarse) ref.current?.blur();
   }
 
   // Allow user to backspace an @token and remove the attachment

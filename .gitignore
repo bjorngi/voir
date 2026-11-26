@@ -23,10 +23,10 @@ dev-data/search-index/
 # contexts, HTML reports).
 test-results/
 playwright-report/
-# Visual-review galleries from `npm run shots` (one dir per run).
-# The PUBLISHED gallery lives in site/ and IS committed — that is what
-# GitHub Pages serves.
-shots/
+# Local visual-review runs from `npm run shots` (one dir per run).
+# Root-anchored on purpose: the PUBLISHED gallery has its own shots/
+# inside site/, and that one IS committed (GitHub Pages serves it).
+/shots/
 # Mock dev stack runtime state (bin/dev.mjs isolates VOIR_DATA_DIR
 # here so the npm run dev:mock / e2e stacks never touch real state).
 dev-data/runtime/

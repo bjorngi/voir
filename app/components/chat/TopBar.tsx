@@ -257,31 +257,69 @@ function ViewTabs({
 }
 
 /* ---------------------------------------------------------------------
+ * Why a control is unavailable
+ * ------------------------------------------------------------------- */
+
+/** Both voice input and Web Push need a secure context. Over plain
+ *  HTTP (the tailnet IP/name, which is how the app is opened on a
+ *  phone without `tailscale serve`) the browser exposes neither
+ *  `getUserMedia`-backed speech recognition nor `PushManager` — so
+ *  say so instead of hiding the control. */
+const HTTPS_HINT = "Needs HTTPS — open the app via `tailscale serve`";
+
+function pushAvailability(state: PushState | undefined):
+  | { ok: true }
+  | { ok: false; reason: string } {
+  if (!state) return { ok: false, reason: HTTPS_HINT };
+  if (state === "unsupported") return { ok: false, reason: HTTPS_HINT };
+  if (state === "denied")
+    return { ok: false, reason: "Blocked in browser settings" };
+  return { ok: true };
+}
+
+/* ---------------------------------------------------------------------
  * Overflow menu (narrow screens)
  * ------------------------------------------------------------------- */
 
 function MenuItem({
   label,
+  note,
   onClick,
   children,
   active,
+  disabled,
 }: {
   label: string;
-  onClick: () => void;
+  /** Second line: why it is unavailable, or a short state. */
+  note?: string;
+  onClick?: () => void;
   children: ReactNode;
   active?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-disabled={disabled || undefined}
       className={
-        "flex w-full items-center gap-3 px-3 py-2.5 text-left text-[13px] active:bg-neutral-900 " +
-        (active ? "text-amber-300" : "text-neutral-300")
+        "flex w-full items-start gap-3 px-3 py-2.5 text-left text-[13px] " +
+        (disabled
+          ? "text-neutral-500"
+          : active
+            ? "text-amber-300 active:bg-neutral-900"
+            : "text-neutral-300 active:bg-neutral-900")
       }
     >
-      <span className="shrink-0">{children}</span>
-      {label}
+      <span className="mt-0.5 shrink-0">{children}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{label}</span>
+        {note && (
+          <span className="mt-0.5 block font-mono text-[10px] leading-snug text-neutral-600">
+            {note}
+          </span>
+        )}
+      </span>
     </button>
   );
 }
@@ -297,6 +335,7 @@ export function TopBar({
   home,
   menuOpen,
   onMenu,
+  onHide,
   voice,
   star,
   push,
@@ -312,9 +351,16 @@ export function TopBar({
   home?: boolean;
   menuOpen?: boolean;
   onMenu: () => void;
-  voice?: { active: boolean; onToggle: () => void };
+  /** `enabled: false` renders the control anyway, marked unavailable —
+   *  silence is the worst answer: the user goes looking for an icon
+   *  that was never rendered and cannot tell whether the app is broken
+   *  or the browser is. */
+  voice?: { active: boolean; enabled: boolean; onToggle: () => void };
   star?: { status: SessionStatus | undefined; folder: string; sessionId: string };
   push?: { state: PushState; onToggle: () => void };
+  /** Collapse the bar to nothing; the caller renders the restore
+   *  affordance pinned to the top-right corner. */
+  onHide?: () => void;
   /** When present, the view switcher renders inside the bar. */
   tabs?: {
     folder: string;
@@ -324,6 +370,15 @@ export function TopBar({
   };
 }) {
   const [overflow, setOverflow] = useState(false);
+  // A one-line explanation under the bar when an unavailable control is
+  // tapped (the control itself stays visible, so the answer is "needs
+  // HTTPS", not "the app forgot my icon").
+  const [why, setWhy] = useState<string | null>(null);
+  useEffect(() => {
+    if (!why) return;
+    const t = setTimeout(() => setWhy(null), 4000);
+    return () => clearTimeout(t);
+  }, [why]);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!overflow) return;
@@ -341,6 +396,10 @@ export function TopBar({
     };
   }, [overflow]);
 
+  // Push availability is derived once: the icon always renders, but it
+  // only acts when the browser can actually do push.
+  const pushState = push ? { ...push, ...pushAvailability(push.state) } : undefined;
+
   const secondary = (
     <>
       {star && (
@@ -352,10 +411,25 @@ export function TopBar({
       )}
       {voice && (
         <IconButton
-          label="Toggle voice conversation mode"
-          title="Talk instead of typing — hands-free conversation"
+          label={
+            voice.enabled
+              ? "Toggle voice conversation mode"
+              : `Voice conversation mode — ${HTTPS_HINT}`
+          }
+          title={
+            voice.enabled
+              ? "Talk instead of typing — hands-free conversation"
+              : `Talk instead of typing — ${HTTPS_HINT}`
+          }
           active={voice.active}
-          onClick={voice.onToggle}
+          onClick={() => {
+            if (!voice.enabled) {
+              setWhy(HTTPS_HINT);
+              return;
+            }
+            voice.onToggle();
+          }}
+          className={voice.enabled ? "" : "opacity-40"}
         >
           <svg
             width="16"
@@ -374,20 +448,31 @@ export function TopBar({
           </svg>
         </IconButton>
       )}
-      {push && (
+      {pushState && (
         <IconButton
           label={
-            push.state === "on"
+            pushState.state === "on"
               ? "Notifications enabled — click to disable"
-              : "Enable push notifications on this device"
+              : pushState.ok
+                ? "Enable push notifications on this device"
+                : `Notifications — ${pushState.reason}`
           }
           title={
-            push.state === "denied"
-              ? "Notifications blocked in browser settings"
-              : "Get a push notification when a machine-seeded conversation lands"
+            pushState.state === "on"
+              ? "Notifications enabled — click to disable"
+              : pushState.ok
+                ? "Get a push notification when a machine-seeded conversation lands"
+                : pushState.reason
           }
-          active={push.state === "on"}
-          onClick={push.onToggle}
+          active={pushState.state === "on"}
+          onClick={() => {
+            if (!pushState.ok) {
+              setWhy(pushState.reason);
+              return;
+            }
+            pushState.onToggle();
+          }}
+          className={pushState.ok || pushState.state === "on" ? "" : "opacity-40"}
         >
           <svg
             width="16"
@@ -402,7 +487,9 @@ export function TopBar({
           >
             <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
             <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-            {push.state !== "on" && <line x1="2" y1="2" x2="22" y2="22" />}
+            {(pushState.state !== "on" || !pushState.ok) && (
+              <line x1="2" y1="2" x2="22" y2="22" />
+            )}
           </svg>
         </IconButton>
       )}
@@ -522,6 +609,30 @@ export function TopBar({
       {/* Secondary actions: inline when there is room, otherwise the ⋯
           menu — same accessible names either way. */}
       <div className="hidden items-center md:flex">{secondary}</div>
+      {/* Hide the whole bar; the caller renders the way back (a small
+          button pinned to the top-right corner of the viewport). */}
+      {onHide && (
+        <IconButton
+          label="Hide top bar"
+          title="Hide top bar — more room for the conversation"
+          onClick={onHide}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="6 15 12 9 18 15" />
+          </svg>
+        </IconButton>
+      )}
+
       <div className="relative md:hidden" ref={box}>
         <IconButton
           label={overflow ? "Close actions" : "More actions"}
@@ -576,9 +687,16 @@ export function TopBar({
             )}
             {voice && (
               <MenuItem
-                label="Voice conversation mode"
+                label={
+                  voice.enabled
+                    ? "Voice conversation mode"
+                    : "Voice conversation mode — unavailable"
+                }
+                note={voice.enabled ? undefined : HTTPS_HINT}
+                disabled={!voice.enabled}
                 active={voice.active}
                 onClick={() => {
+                  if (!voice.enabled) return;
                   voice.onToggle();
                   setOverflow(false);
                 }}
@@ -597,14 +715,21 @@ export function TopBar({
                 </svg>
               </MenuItem>
             )}
-            {push && (
+            {pushState && (
               <MenuItem
                 label={
-                  push.state === "on" ? "Notifications on" : "Enable notifications"
+                  pushState.state === "on"
+                    ? "Notifications on"
+                    : pushState.ok
+                      ? "Enable notifications"
+                      : "Notifications — unavailable"
                 }
-                active={push.state === "on"}
+                note={pushState.ok ? undefined : pushState.reason}
+                disabled={!pushState.ok && pushState.state !== "on"}
+                active={pushState.state === "on"}
                 onClick={() => {
-                  push.onToggle();
+                  if (!pushState.ok && pushState.state !== "on") return;
+                  pushState.onToggle();
                   setOverflow(false);
                 }}
               >
@@ -645,6 +770,60 @@ export function TopBar({
           </div>
         )}
       </div>
+      {why && (
+        <div
+          role="status"
+          className="absolute inset-x-2 top-full z-30 mt-1 rounded border border-neutral-700 bg-neutral-900 px-3 py-2 font-mono text-[11px] leading-snug text-neutral-300 shadow-xl"
+        >
+          {why}
+        </div>
+      )}
     </header>
+  );
+}
+
+/**
+ * Restore handle for a hidden bar: pinned to the viewport's top-right
+ * corner, small but a comfortable tap target (36×36 with a 44px hit
+ * area via padding), translucent so it does not compete with content.
+ */
+export function ShowBarButton({
+  onClick,
+  busy,
+}: {
+  onClick: () => void;
+  /** With the bar gone, the bar's status dot would be gone too — keep
+   *  it here, so a hidden bar never hides the fact that a turn is
+   *  running. */
+  busy?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Show top bar"
+      title="Show top bar"
+      className="absolute right-0 top-0 z-30 m-1.5 inline-flex h-9 w-9 items-center justify-center rounded-md border border-neutral-700/70 bg-neutral-900/85 text-neutral-300 shadow-lg shadow-black/40 backdrop-blur-sm transition-colors hover:border-neutral-600 hover:text-white active:bg-neutral-800 before:absolute before:-inset-2 before:content-['']"
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
+      {busy && (
+        <span
+          aria-hidden
+          className="absolute right-1 top-1 h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400"
+        />
+      )}
+    </button>
   );
 }

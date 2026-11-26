@@ -1,5 +1,5 @@
 {
-  "stamp": "2026-11-26_19-11-14",
+  "stamp": "2026-11-26_19-30-04",
   "target": "http://127.0.0.1:9300",
   "shots": [
     {
@@ -25,6 +25,12 @@
       "label": "Chat — What is Voir? (top)",
       "viewport": "fold-cover-portrait",
       "group": "chat"
+    },
+    {
+      "file": "fold-cover-portrait-bar-hidden.webp",
+      "label": "Chat — top bar hidden",
+      "viewport": "fold-cover-portrait",
+      "group": "chrome"
     },
     {
       "file": "fold-cover-portrait-drawer.webp",
@@ -99,6 +105,12 @@
       "group": "chat"
     },
     {
+      "file": "fold-cover-landscape-bar-hidden.webp",
+      "label": "Chat — top bar hidden",
+      "viewport": "fold-cover-landscape",
+      "group": "chrome"
+    },
+    {
       "file": "fold-cover-landscape-drawer.webp",
       "label": "Chat — model drawer open",
       "viewport": "fold-cover-landscape",
@@ -169,6 +181,12 @@
       "label": "Chat — What is Voir? (top)",
       "viewport": "fold-inner-portrait",
       "group": "chat"
+    },
+    {
+      "file": "fold-inner-portrait-bar-hidden.webp",
+      "label": "Chat — top bar hidden",
+      "viewport": "fold-inner-portrait",
+      "group": "chrome"
     },
     {
       "file": "fold-inner-portrait-drawer.webp",
@@ -243,6 +261,12 @@
       "group": "chat"
     },
     {
+      "file": "fold-inner-landscape-bar-hidden.webp",
+      "label": "Chat — top bar hidden",
+      "viewport": "fold-inner-landscape",
+      "group": "chrome"
+    },
+    {
       "file": "fold-inner-landscape-drawer.webp",
       "label": "Chat — model drawer open",
       "viewport": "fold-inner-landscape",
@@ -313,6 +337,12 @@
       "label": "Chat — What is Voir? (top)",
       "viewport": "laptop",
       "group": "chat"
+    },
+    {
+      "file": "laptop-bar-hidden.webp",
+      "label": "Chat — top bar hidden",
+      "viewport": "laptop",
+      "group": "chrome"
     },
     {
       "file": "laptop-drawer.webp",

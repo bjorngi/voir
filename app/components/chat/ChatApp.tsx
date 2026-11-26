@@ -19,7 +19,7 @@ import { SessionDebugButton } from "~/components/SessionDebugButton";
 import { ChangesView } from "~/components/ChangesView";
 import { FileExplorer } from "~/components/FileExplorer";
 import { ChatView } from "./ChatView";
-import { TopBar, type ChangesBadge } from "./TopBar";
+import { ShowBarButton, TopBar, type ChangesBadge } from "./TopBar";
 
 export function ChatApp({ data }: { data: ChatLoaderData }) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -35,6 +35,24 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         typeof WebSocket !== "undefined",
     );
   }, []);
+
+  // Chrome can be collapsed entirely: on a phone in landscape the bar
+  // is 40px out of ~400, and sometimes the conversation is what matters.
+  // Persisted so the choice survives a reload (the PWA is reloaded
+  // often); read post-mount so SSR and hydration agree.
+  const [barHidden, setBarHidden] = useState(false);
+  useEffect(() => {
+    try {
+      setBarHidden(localStorage.getItem("voir:topbar-hidden") === "1");
+    } catch {}
+  }, []);
+  const setBar = (hidden: boolean) => {
+    setBarHidden(hidden);
+    try {
+      localStorage.setItem("voir:topbar-hidden", hidden ? "1" : "0");
+    } catch {}
+  };
+
   // Spoken replies: voice mode narrates via the ChatView — the
   // engine (one hook instance) lives here, the speaking lives in
   // the chat view. The header shows no toggle; narration is a
@@ -114,7 +132,10 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         : undefined;
 
   return (
-    <div className="flex h-full flex-col bg-neutral-950">
+    <div className="relative flex h-full flex-col bg-neutral-950">
+      {barHidden ? (
+        <ShowBarButton onClick={() => setBar(false)} busy={busy} />
+      ) : (
       <TopBar
         label={label}
         title={contextTitle}
@@ -122,6 +143,7 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
         home={data.k !== "folders"}
         menuOpen={pickerOpen}
         onMenu={() => setPickerOpen((v) => !v)}
+        onHide={() => setBar(true)}
         star={
           data.k === "chat"
             ? {
@@ -132,21 +154,15 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
             : undefined
         }
         voice={
-          data.k === "chat" && voiceSupported
+          data.k === "chat"
             ? {
                 active: voiceActive,
+                enabled: voiceSupported,
                 onToggle: () => setVoiceActive((v) => !v),
               }
             : undefined
         }
-        push={
-          push.state === "on" || push.state === "off" || push.state === "denied"
-            ? {
-                state: push.state,
-                onToggle: push.toggle,
-              }
-            : undefined
-        }
+        push={{ state: push.state, onToggle: push.toggle }}
         tabs={
           showTabs
             ? {
@@ -164,6 +180,7 @@ export function ChatApp({ data }: { data: ChatLoaderData }) {
             : undefined
         }
       />
+      )}
       <main className="relative min-h-0 flex-1">
         {data.k === "folders" && (
           <FoldersView

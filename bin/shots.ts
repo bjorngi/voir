@@ -258,6 +258,14 @@ for (const d of DISPLAYS) {
       false,
     );
 
+    // 3b) Chrome collapsed: the conversation-only view, with the
+    // restore handle pinned to the top-right corner.
+    await page.getByLabel("Hide top bar").click();
+    await page.waitForTimeout(350);
+    await shot(page, d.id, "chrome", "bar-hidden", "Chat — top bar hidden", false);
+    await page.getByLabel("Show top bar").click();
+    await page.waitForTimeout(250);
+
     // 4) Drawer open on this chat.
     await page
       .getByRole("button", { name: "Open model, mode and fence" })

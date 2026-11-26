@@ -26,6 +26,12 @@ services:
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 9000"
     environment:
       NODE_ENV: development
+      # The mock containers reach the UI as http://web:9000, which
+      # arrives as the Host header "web:9000". Vite's DNS-rebinding
+      # guard blocks unknown names, and the tailnet-derived defaults
+      # (see allowedHostNames() in vite.config.ts) can't know compose
+      # service names — so list them here.
+      VOIR_ALLOWED_HOSTS: web
     ports:
       - "9000:9000"
     volumes:
@@ -57,6 +63,12 @@ services:
     # Voir sees, so distinct paths → distinct folder entries in
     # the sidebar (Voir dedupes folders by the path the launcher
     # registers).
+    #
+    # MOCK_VARIANT picks the mock's seed set (see
+    # bin/mock-acp.mjs): a/b give the two folders distinct
+    # session lists, like the local `npm run dev:mock` stack.
+    environment:
+      MOCK_VARIANT: a
     working_dir: /project-a
     command:
       - node
@@ -106,6 +118,8 @@ services:
     volumes:
       - .:/voir-src:ro
       - ./dev-data/project-b:/project-b
+    environment:
+      MOCK_VARIANT: b
     ports:
       - "9102:9102"
     depends_on:

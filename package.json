@@ -21,8 +21,13 @@
   "scripts": {
     "build": "react-router build",
     "dev": "react-router dev",
+    "dev:mock": "node bin/dev.mjs",
+    "shots": "tsx bin/shots.ts",
+    "shots:serve": "node bin/shots-serve.mjs",
+    "mcp:browser": "npx @playwright/mcp@latest --port 8932 --browser chromium --user-data-dir $HOME/.cache/ms-playwright-mcp/voir",
     "start": "tsx bin/server.ts",
     "test": "node --import tsx --test test/**/*.test.ts",
+    "test:e2e": "playwright test",
     "typecheck": "react-router typegen && tsc"
   },
   "dependencies": {
@@ -51,6 +56,7 @@
     "ws": "8.23.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.1",
     "@react-router/dev": "^8.5.2",
     "@tailwindcss/vite": "^4.3.5",
     "@types/express": "^5.0.6",

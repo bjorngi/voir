@@ -19,3 +19,19 @@ dev-data/shares.json
 # Search index — persisted transcript snapshots for cross-session
 # search (docs/search.md); agent truth owns what the chat renders.
 dev-data/search-index/
+# Playwright e2e artifacts (npm run test:e2e — traces, error
+# contexts, HTML reports).
+test-results/
+playwright-report/
+# Visual-review galleries from `npm run shots` (one dir per run).
+shots/
+# Mock dev stack runtime state (bin/dev.mjs isolates VOIR_DATA_DIR
+# here so the npm run dev:mock / e2e stacks never touch real state).
+dev-data/runtime/
+# bin/dev.mjs turns the sample worktrees into throwaway git repos at
+# runtime (the Changes tab needs a real base branch + dirty tree).
+# They are fixtures, not submodules — never commit them.
+dev-data/*/.git/
+# Playwright MCP browser artifacts (snapshots, console logs) when
+# driving the dev stack interactively from this repo.
+.playwright-mcp/

@@ -23,10 +23,13 @@
 //   - session/set_model,
 //     session/set_mode      → ack with the chosen id, plus a
 //                              current_*_update notification
-//   - session/cancel        → ack
+//   - session/cancel        → ack (+ idle signal)
 //   - session/list          → return the sessions we've created
 //   - session/resume        → ack
 //   - ping                  → { ok: true }
+//
+//   Seeded sessions: a pre-populated history for the dev compose
+//   (MOCK_VARIANT=a|b picks the flavour — see SEED_SESSIONS).
 //
 // Streaming cadence is deliberately slow (a small delay between chunks)
 // so the chat UI's "streaming" cursor is visible during a turn.
@@ -147,12 +150,47 @@ const COMMANDS = [
 // Voir shows more than just "+ New chat". Each seed gets a
 // stable id (slug + index) so re-opening the same session
 // after a server round-trip finds the same record.
-const SEED_SESSIONS = [
+//
+// MOCK_VARIANT picks the set: "a" and "b" give the two dev
+// folders distinct flavours (bin/dev.mjs and docker-compose
+// set it — project-a is app work, project-b is the experiments
+// repo), while unset serves the shared seeds plus the "a"
+// extras, so a bare `acp-spawn … mock-acp.mjs` still looks
+// like a lived-in worktree. Ages are staggered deliberately —
+// minutes, hours and days — so the sidebar exercises its
+// time formatting across the whole range.
+const SHARED_SEEDS = [
   { title: "What is Voir?", minutesAgo: 5 },
-  { title: "Refactor auth middleware", minutesAgo: 18 },
+  { title: "Rich content tour", minutesAgo: 10 },
   { title: "Fix flaky E2E tests", minutesAgo: 47 },
-  { title: "Add a /health endpoint", minutesAgo: 90 },
 ];
+const VARIANT_A_SEEDS = [
+  { title: "Refactor auth middleware", minutesAgo: 18 },
+  { title: "Add a /health endpoint", minutesAgo: 90 },
+  { title: "Triage the task list", minutesAgo: 300 },
+];
+const VARIANT_B_SEEDS = [
+  { title: "Parse CSV edge cases", minutesAgo: 35 },
+  { title: "Sandbox escape hatches", hoursAgo: 4 },
+  { title: "Audit sample data", daysAgo: 2 },
+];
+const VARIANT = (process.env.MOCK_VARIANT ?? "").toLowerCase();
+const SEED_SESSIONS =
+  VARIANT === "b"
+    ? [...SHARED_SEEDS, ...VARIANT_B_SEEDS]
+    : [...SHARED_SEEDS, ...VARIANT_A_SEEDS];
+
+// Seed ids are namespaced by variant (or a per-boot tag when the
+// variant is unset): `seed-a-what-is-voir`, `seed-b-what-is-voir`.
+// Voir dispatches session/update notifications by sessionId
+// across ALL registered agents (safe for real agents — ACP
+// session ids are UUIDs, globally unique), so identical seed
+// ids in two mock folders would cross-wire the replays:
+// opening the session in folder A would stream chunks into
+// folder B's list stub. Unique ids keep the two mocks fully
+// independent, the way two real agents are.
+const INSTANCE = VARIANT || randomUUID().slice(0, 8);
+const seedId = (title) => `seed-${INSTANCE}-${slug(title)}`;
 
 // History for each seeded session, replayed as a stream of
 // session/update notifications when the user opens it. The
@@ -442,6 +480,257 @@ const SEED_HISTORY = {
       text: "Mounted at `/health`. The readiness probe is the same as liveness for now — when we add a DB pool I'll split them.",
     },
   ],
+
+  // One of every renderable rich-content block (the RICH_DEMO
+  // payload from a prompt-time "rich", replayed as seed history)
+  // so every module — mermaid, chart, table, card, ha chip, d3,
+  // html — is visible on open, no typing required. The redesign
+  // walkthrough and the e2e suite lean on this session.
+  "Rich content tour": [
+    {
+      kind: "user",
+      text: "Show me one of everything you can render — every block type, in one reply.",
+    },
+    {
+      kind: "thought",
+      text: "The render registry covers mermaid, voir-chart, csv tables, voir-cards, inline ha chips, d3 and html sandboxes. One of each, smallest sensible example of each.",
+    },
+    {
+      kind: "agent",
+      text:
+        "Every renderable module in one turn — flowchart, chart, table, card, entity chip, bespoke d3 and a sandboxed html app. Resize the window and the plots follow.\n\n" +
+        RICH_DEMO,
+    },
+  ],
+
+  // Variant-a extra (project-a — the little TS app): a card in a
+  // natural context — the triage answer, not a demo.
+  "Triage the task list": [
+    {
+      kind: "user",
+      text: "Go through TASKS.md and tell me what's actually left before the demo. @TASKS.md",
+    },
+    {
+      kind: "thought",
+      text: "Read the task list first, then sort by blocks-the-demo vs nice-to-have.",
+    },
+    {
+      kind: "tool",
+      toolCallId: "tc-tasks-1",
+      toolKind: "read",
+      title: "Read TASKS.md",
+      status: "in_progress",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text:
+              "# TASKS\n\n" +
+              "- [x] parser: quoted fields with newlines\n" +
+              "- [x] auth: requireAuth middleware\n" +
+              "- [ ] cli: --json output flag\n" +
+              "- [ ] test: edge-case table for the parser\n" +
+              "- [ ] docs: README quickstart refresh\n" +
+              "- [x] health endpoint\n",
+          },
+        },
+      ],
+    },
+    {
+      kind: "tool_update",
+      toolCallId: "tc-tasks-1",
+      status: "completed",
+    },
+    {
+      kind: "agent",
+      text:
+        '```voir-card\n' +
+        JSON.stringify({
+          title: "Task list before the demo",
+          pill: { text: "4 left", tone: "warn" },
+          rows: [
+            { k: "done", v: "4", spark: [1, 2, 3, 4] },
+            { k: "blocking the demo", v: "2", delta: "cli --json, edge-case table" },
+            { k: "nice to have", v: "2" },
+          ],
+          actions: [
+            { label: "Start with the CLI flag", kind: "send", value: "Implement the --json output flag in cli.ts." },
+          ],
+        }) +
+        '\n```\n\n' +
+        "Two of the four actually block the demo: the `--json` flag (the demo script calls it) and the parser edge-case table (CI is red without it). The README refresh can wait. Say the word and I'll start with the flag.",
+    },
+  ],
+
+  // Variant-b extras (project-b — the experiments repo). A
+  // parse bug with a table of failing cases and an edit diff;
+  // a design discussion with a tool-read of the design doc; a
+  // two-day-old data audit so the sidebar shows an old session.
+  "Parse CSV edge cases": [
+    {
+      kind: "user",
+      text: "Quoted fields with embedded newlines break the row splitter. @src/parse.ts",
+    },
+    {
+      kind: "thought",
+      text: "The splitter is a single regex pass — it can't know a newline is inside quotes. Needs a real state machine.",
+    },
+    {
+      kind: "tool",
+      toolCallId: "tc-parse-1",
+      toolKind: "read",
+      title: "Read src/parse.ts",
+      status: "in_progress",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text:
+              "export function splitRows(text: string): string[][] {\n" +
+              "  return text\n" +
+              "    .split(/\\r?\\n/)\n" +
+              '    .filter((l) => l.trim() !== "")\n' +
+              "    .map((l) => l.match(/…/g) ?? []);\n" +
+              "}\n// …",
+          },
+        },
+      ],
+    },
+    {
+      kind: "tool_update",
+      toolCallId: "tc-parse-1",
+      status: "completed",
+    },
+    {
+      kind: "agent",
+      text:
+        "Reproduced. `split(\`/\\r?\\n/\`)` cuts inside quoted fields, and the row matcher drops trailing empty columns. A small state machine handles both:\n\n" +
+        "```csv\ncase,rows in,rows out,notes\n" +
+        "plain,3,3,baseline\n" +
+        "quoted newline,1,2,current splits mid-field\n" +
+        "escaped quote,2,3,current phantom row\n" +
+        "trailing separator,2,2,fixed by both\n" +
+        "```\n\n" +
+        "After the fix all four round-trip.",
+    },
+    {
+      kind: "tool",
+      toolCallId: "tc-parse-2",
+      toolKind: "edit",
+      title: "Edit src/parse.ts",
+      status: "in_progress",
+      content: [
+        {
+          type: "diff",
+          path: "src/parse.ts",
+          oldText:
+            "export function splitRows(text: string): string[][] {\n" +
+            "  return text.split(/\\r?\\n/).filter(/* … */);\n}",
+          newText:
+            "export function splitRows(text: string): string[][] {\n" +
+            "  // state machine: track quote state char by char so\n" +
+            "  // quoted newlines and escaped quotes stay inside\n" +
+            "  // their field.\n" +
+            '  const rows: string[][] = [];\n  /* … */\n}',
+        },
+      ],
+    },
+    {
+      kind: "tool_update",
+      toolCallId: "tc-parse-2",
+      status: "completed",
+    },
+    {
+      kind: "agent",
+      text:
+        "Switched `splitRows` to a quote-tracking state machine (24 lines). Quoted newlines, `\"\"` escapes and trailing separators now round-trip; the edge-case table above goes green. Want me to wire it into the CLI too, or leave that for the `--json` task?",
+    },
+  ],
+
+  "Sandbox escape hatches": [
+    {
+      kind: "user",
+      text: "If the sandbox blocks the network by default, what's the escape hatch for one command that needs it?",
+    },
+    {
+      kind: "thought",
+      text: "Design-doc territory — check docs/design.md for what we already decided before opining.",
+    },
+    {
+      kind: "tool",
+      toolCallId: "tc-design-1",
+      toolKind: "read",
+      title: "Read docs/design.md",
+      status: "in_progress",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text:
+              "# Design — sandbox\n\n" +
+              "- default deny: no network, read-only FS except /tmp\n" +
+              "- escape hatch: per-command allowlist in the launcher profile\n" +
+              "- never: blanket allow; the hatch is explicit, per command, and logged\n",
+          },
+        },
+      ],
+    },
+    {
+      kind: "tool_update",
+      toolCallId: "tc-design-1",
+      status: "completed",
+    },
+    {
+      kind: "agent",
+      text:
+        "Per the design doc: the launcher profile carries a per-command allowlist. The default stays deny — no network, read-only filesystem except `/tmp` — and a command that needs the network declares it explicitly: which command, which hosts. The hatch is logged every time it opens, so grepping the log answers “why did this build phone home”. Blanket allow exists on purpose only as a named profile you have to opt into, never as a flag someone can sprinkle.",
+    },
+  ],
+
+  "Audit sample data": [
+    {
+      kind: "user",
+      text: "Sanity-check data/sample.json against the schema before we demo it.",
+    },
+    {
+      kind: "tool",
+      toolCallId: "tc-audit-1",
+      toolKind: "read",
+      title: "Read data/sample.json",
+      status: "in_progress",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text:
+              '{\n  "rows": 418,\n  "fields": ["id", "ts", "value", "tag"],\n' +
+              '  "badRows": [\n    { "line": 1024, "issue": "ts not ISO-8601" },\n    { "line": 2531, "issue": "value: null" }\n  ]\n}\n',
+          },
+        },
+      ],
+    },
+    {
+      kind: "tool_update",
+      toolCallId: "tc-audit-1",
+      status: "completed",
+    },
+    {
+      kind: "agent",
+      text:
+        "418 rows, two bad ones. Field coverage:\n\n" +
+        "```csv\nfield,filled,missing,invalid\n" +
+        "id,418,0,0\n" +
+        "ts,416,0,2\n" +
+        "value,417,1,0\n" +
+        "tag,418,0,0\n" +
+        "```\n\n" +
+        "Both bad rows are one-off authoring mistakes (line 1024 has a hand-typed timestamp, line 2531 a literal `null`), not a generator bug. I'd patch the two rows and call the sample clean for the demo.",
+    },
+  ],
 };
 
 const REPLIES = [
@@ -472,12 +761,15 @@ function slug(s) {
 }
 {
   const cwd0 = process.cwd();
+  const ageMs = (seed) =>
+    (seed.daysAgo ? seed.daysAgo * 86_400_000 : 0) +
+    (seed.hoursAgo ? seed.hoursAgo * 3_600_000 : 0) +
+    (seed.minutesAgo ?? 0) * 60_000;
   for (let i = 0; i < SEED_SESSIONS.length; i++) {
     const seed = SEED_SESSIONS[i];
-    const id = `seed-${slug(seed.title)}`;
-    sessions.set(id, {
+    sessions.set(seedId(seed.title), {
       cwd: cwd0,
-      createdAt: Date.now() - seed.minutesAgo * 60_000,
+      createdAt: Date.now() - ageMs(seed),
       title: seed.title,
     });
   }
@@ -498,6 +790,26 @@ function respondError(id, code, message) {
 
 function notify(method, params) {
   write({ jsonrpc: "2.0", method, params });
+}
+
+/**
+ * The pi-acp idle signal: `session_info_update` carrying
+ * `_meta.piAcp.running: false` (+ queue depth 0). Voir treats it
+ * as the authoritative "agent loop is idle" event and releases
+ * busy state that was only inferred from streamed text — without
+ * it, a replayed transcript that ends mid-sentence leaves the
+ * chat looking like a turn is still running (STOP/QUEUE buttons,
+ * amber composer). Real pi-acp emits this at every turn end, so
+ * the mock must too or the dev stack misrepresents the UI.
+ */
+function notifyIdle(sessionId) {
+  notify("session/update", {
+    sessionId,
+    update: {
+      sessionUpdate: "session_info_update",
+      _meta: { piAcp: { running: false, queueDepth: 0 } },
+    },
+  });
 }
 
 function sleep(ms) {
@@ -628,7 +940,9 @@ const handlers = {
     };
   },
 
-  "session/cancel"() {
+  "session/cancel"({ sessionId }) {
+    // A cancelled turn still ends the loop: idle is idle.
+    if (sessionId) notifyIdle(sessionId);
     return {};
   },
 
@@ -703,6 +1017,7 @@ const handlers = {
         content: { type: "text", text: RICH_DEMO },
       });
       await sleep(30);
+      notifyIdle(sessionId);
       return { stopReason: "end_turn" };
     }
 
@@ -725,6 +1040,8 @@ const handlers = {
       });
     }
 
+    // Turn end: the loop is idle again (see notifyIdle).
+    notifyIdle(sessionId);
     return { stopReason: "end_turn" };
   },
 
@@ -788,6 +1105,10 @@ async function dispatch(req) {
               update: { sessionUpdate: "session_info_update", title: seed.title },
             });
           }
+          // The replay is a completed past: the loop is idle. Sent
+          // last so it also serves as a second "replay done"
+          // boundary (voir closes replay on either of these).
+          notifyIdle(sessionId);
         }, 50);
       }
     }

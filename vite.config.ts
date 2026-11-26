@@ -1,5 +1,6 @@
 import os from "node:os";
 import net from "node:net";
+import { execFileSync } from "node:child_process";
 import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from "vite";
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
@@ -32,14 +33,27 @@ export default defineConfig(({ mode }) => {
       host: "127.0.0.1",
       port: 9000,
       // DNS-rebinding protection stays on: IP hosts (127.0.0.1, the
-      // Tailscale 100.x address) and localhost are always allowed.
-      // The tailnet hostname must be allowed explicitly because
-      // `tailscale serve` (which provides the HTTPS that unlocks
-      // the microphone API + service worker on phones — plain HTTP
-      // over the tailnet is not a secure context) forwards it as
-      // the Host header. Scoped to this tailnet's subdomain, not
-      // all of ts.net.
-      allowedHosts: [".tailedc77f.ts.net"],
+      // Tailscale 100.x address) and localhost are always allowed —
+      // so `http://100.80.72.28:9300/` works without config. Names
+      // must be listed explicitly, because they arrive as the Host
+      // header:
+      //
+      //   - `tailscale serve` (the HTTPS that unlocks the microphone
+      //     API + service worker on phones) forwards the MagicDNS
+      //     name, e.g. devbox-2.<tailnet>.ts.net;
+      //   - MagicDNS also answers the SHORT name (devbox-2:9300) on
+      //     the tailnet, and that is not covered by the ts.net
+      //     wildcard — it is a bare hostname, which Vite blocks
+      //     unless listed. That's the "Blocked request. This host
+      //     (\"devbox-2\") is not allowed" error.
+      //
+      // The list is derived from this machine's Tailscale identity
+      // (node name may differ from os.hostname() — devbox-2 vs
+      // devbox), so it stays correct on another host without edits.
+      // Composed setups add their service names via
+      // VOIR_ALLOWED_HOSTS (docker-compose sets it to "web", which
+      // is how the mock containers reach the UI).
+      allowedHosts: allowedHostNames(),
     },
   };
 });
@@ -59,6 +73,60 @@ export default defineConfig(({ mode }) => {
 // server never binds a non-Tailscale, non-loopback interface, and
 // if Tailscale isn't running, the server stays loopback-only.
 // -----------------------------------------------------------------------
+
+/**
+ * Host-header allowlist for Vite's dev server (DNS-rebinding guard).
+ *
+ * IP literals (127.0.0.1, ::1, the 100.x tailnet address) and
+ * "localhost" are always allowed by Vite and need no entry. Names
+ * must be listed, because a name arrives as the Host header — and
+ * MagicDNS answers two shapes for the same node:
+ *
+ *   devbox-2.tailedc77f.ts.net   (FQDN: what `tailscale serve` sends)
+ *   devbox-2                     (short name: bare, NOT matched by
+ *                                 the .ts.net wildcard)
+ *
+ * Deriving both from `tailscale status --json` keeps this correct
+ * when the tailnet domain changes or the checkout moves to another
+ * machine (whose node name may differ from os.hostname() — here the
+ * node is "devbox-2" while the host is "devbox").
+ *
+ * Containers have no tailscale binary: the call fails soft and the
+ * compose setup supplies its service names via VOIR_ALLOWED_HOSTS
+ * (docker-compose.yml sets "web").
+ */
+function allowedHostNames(): string[] {
+  const names = new Set<string>([
+    // Belt-and-braces for on-host access by machine name.
+    os.hostname(),
+    // Explicit extras: comma-separated hostnames ("web,mock-a, …").
+    ...(process.env.VOIR_ALLOWED_HOSTS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  ]);
+  try {
+    const out = execFileSync("tailscale", ["status", "--json"], {
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const self = (JSON.parse(out) as { Self?: { DNSName?: string; HostName?: string } })
+      .Self;
+    const fqdn = String(self?.DNSName ?? "").replace(/\.$/, "");
+    if (fqdn) {
+      names.add(fqdn);
+      // ".tailXXXX.ts.net" allows every node in this tailnet, so a
+      // sibling device hitting this dev server by name works too.
+      const dot = fqdn.indexOf(".");
+      if (dot > 0) names.add(fqdn.slice(dot));
+    }
+    if (self?.HostName) names.add(String(self.HostName));
+  } catch {
+    // Not a tailnet host (container, CI, laptop without Tailscale).
+  }
+  return [...names];
+}
 
 /**
  * Tailscale assigns each node an IPv4 in 100.64.0.0/10 (the CGNAT

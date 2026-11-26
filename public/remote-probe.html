@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>voir — remote probe</title>
+<link rel="icon" href="/icons/icon-192.png">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 12px calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+    background: #0b0d10; color: #e5e5e5;
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 { font-size: 15px; margin: 4px 0 2px; letter-spacing: .08em; text-transform: uppercase; }
+  h1 span { color: #34d399; }
+  p.note { color: #a3a3a3; margin: 0 0 14px; font-size: 12px; }
+  section { border: 1px solid #262626; border-radius: 10px; padding: 10px; margin-bottom: 12px; background: #101317; }
+  h2 { font-size: 12px; margin: 0 0 8px; letter-spacing: .06em; text-transform: uppercase; color: #a3a3a3; }
+  h2 b { color: #e5e5e5; font-weight: 600; }
+  button {
+    font: inherit; padding: 8px 12px; border-radius: 8px; cursor: pointer;
+    background: #1c2128; color: #e5e5e5; border: 1px solid #30363d; min-height: 40px;
+  }
+  button:active { background: #262d36; }
+  button.primary { background: #065f46; border-color: #10b981; }
+  button.on { background: #7f1d1d; border-color: #ef4444; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  #keys { min-height: 74px; margin: 8px 0; border: 1px dashed #30363d; border-radius: 8px; padding: 6px; overflow-wrap: anywhere; }
+  .chip {
+    display: inline-block; margin: 2px; padding: 2px 7px; border-radius: 6px;
+    background: #1f2937; border: 1px solid #374151; font-size: 12px; white-space: nowrap;
+  }
+  .chip.new { background: #065f46; border-color: #10b981; }
+  .chip code { color: #93c5fd; }
+  pre#log {
+    margin: 8px 0 0; max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    background: #08090b; border: 1px solid #262626; border-radius: 8px; padding: 8px; font-size: 11.5px;
+    color: #cbd5e1;
+  }
+  .muted { color: #737373; }
+  .warn { color: #fbbf24; }
+  .ok { color: #34d399; }
+  #media-state { font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>voir <span>remote probe</span></h1>
+<p class="note">
+  Open this over the same secure origin as voir (tailnet HTTPS) on the phone, or from a desktop
+  for a keyboard sanity check. Nothing is sent anywhere — use <b>Copy log</b> and paste it back.
+</p>
+
+<section>
+  <h2><b>1 · keydown</b> — pair the ring as a keyboard/mouse, then press every button</h2>
+  <div id="keys"><span class="muted">waiting for a key…</span></div>
+  <div class="row">
+    <button id="capture" class="on">swallow keys: on</button>
+    <button id="clearKeys">clear</button>
+  </div>
+  <p class="note" style="margin:8px 0 0">
+    Swallow on keeps the page from scrolling/tabbing while you probe. Turn it off to check
+    whether a button reaches the browser's own handling (e.g. a media key).
+  </p>
+</section>
+
+<section>
+  <h2><b>2 · mouse / wheel</b> (a scrolling ring is often a wheel)</h2>
+  <div id="wheel" class="muted">no wheel events yet</div>
+</section>
+
+<section>
+  <h2><b>3 · media session</b> — which consumer-key commands arrive</h2>
+  <div class="row">
+    <button id="mediaStart" class="primary">start quiet audio + handlers</button>
+    <button id="mediaStop">stop</button>
+  </div>
+  <p id="media-state" class="muted" style="margin:8px 0 0">idle — media keys only route while a session is active</p>
+</section>
+
+<section>
+  <h2><b>4 · Web Bluetooth GATT</b> — only if the ring is not bonded as HID</h2>
+  <div class="row">
+    <button id="bleScan">scan / connect</button>
+    <button id="bleDisc">disconnect</button>
+  </div>
+  <p class="note" style="margin:8px 0 0">
+    Android hands a bonded HID device to the HID profile, so it usually won't show here.
+    If so: unpair it, or use <b>nRF Connect</b> on the phone to read the GATT table.
+  </p>
+</section>
+
+<section>
+  <h2><b>5 · gamepad API</b> (some BLE HID remotes expose themselves here)</h2>
+  <div id="pads" class="muted">no gamepads</div>
+</section>
+
+<section>
+  <h2>log</h2>
+  <div class="row">
+    <button id="copyLog" class="primary">copy log</button>
+    <button id="clearLog">clear</button>
+  </div>
+  <pre id="log"></pre>
+</section>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const logEl = $("log");
+  const lines = [];
+
+  function log(msg) {
+    const t = new Date().toISOString().slice(11, 23);
+    lines.push(t + "  " + msg);
+    if (lines.length > 400) lines.shift();
+    logEl.textContent = lines.join("\n");
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+  const ascii = (buf) => [...new Uint8Array(buf)].map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : ".")).join("");
+
+  // ---------------------------------------------------------------- 1 · keys
+  let swallow = true;
+  const seen = new Map();
+  const keysEl = $("keys");
+
+  function renderKeys(last) {
+    keysEl.innerHTML = "";
+    const entries = [...seen.entries()];
+    if (!entries.length) { keysEl.innerHTML = '<span class="muted">waiting for a key…</span>'; return; }
+    for (const [code, info] of entries) {
+      const el = document.createElement("span");
+      el.className = "chip" + (code === last ? " new" : "");
+      el.innerHTML = "<code>" + code + "</code> ×" + info.n + " " +
+        (info.key !== code ? "(" + info.key + ") " : "") +
+        "kc=" + info.keyCode;
+      keysEl.appendChild(el);
+    }
+  }
+
+  function onKey(e, phase) {
+    const code = e.code || "(empty)";
+    const key = e.key || "(empty)";
+    const id = code + "|" + e.keyCode + "|" + phase;
+    const prev = seen.get(id) || { n: 0, key, keyCode: e.keyCode, phase };
+    prev.n += 1;
+    seen.set(id, prev);
+    renderKeys(id);
+    if (e.repeat) return;
+    log(
+      "key " + phase + " code=" + code + " key=" + JSON.stringify(key) +
+      " kc=" + e.keyCode + " which=" + e.which + " loc=" + e.location +
+      " mods=" + (e.altKey ? "A" : "") + (e.ctrlKey ? "C" : "") + (e.metaKey ? "M" : "") + (e.shiftKey ? "S" : "")
+    );
+    if (swallow) { e.preventDefault(); e.stopPropagation(); }
+  }
+  window.addEventListener("keydown", (e) => onKey(e, "down"), true);
+  window.addEventListener("keyup", (e) => onKey(e, "up"), true);
+
+  $("capture").addEventListener("click", (e) => {
+    swallow = !swallow;
+    e.currentTarget.textContent = "swallow keys: " + (swallow ? "on" : "off");
+    e.currentTarget.classList.toggle("on", swallow);
+    log("swallow=" + swallow);
+  });
+  $("clearKeys").addEventListener("click", () => { seen.clear(); renderKeys(""); });
+
+  // ------------------------------------------------------- 2 · wheel / mouse
+  // A scrolling ring is frequently a HID mouse: relative wheel deltas,
+  // possibly with buttons 4/5 (side buttons) reported as mouse buttons.
+  const wheelEl = $("wheel");
+  let wheelCount = 0;
+  window.addEventListener("wheel", (e) => {
+    wheelCount += 1;
+    wheelEl.className = "";
+    wheelEl.textContent =
+      "wheel ×" + wheelCount + "  deltaY=" + e.deltaY.toFixed(1) +
+      " deltaX=" + e.deltaX.toFixed(1) + " deltaMode=" + e.deltaMode;
+    log("wheel dy=" + e.deltaY.toFixed(1) + " dx=" + e.deltaX.toFixed(1) + " mode=" + e.deltaMode);
+  }, { passive: true });
+
+  window.addEventListener("mousedown", (e) => log("mouse button=" + e.button + " detail=" + e.detail), true);
+  window.addEventListener("auxclick", (e) => log("auxclick button=" + e.button), true);
+  window.addEventListener("contextmenu", (e) => log("contextmenu"), true);
+
+  // -------------------------------------------------------- 3 · media session
+  // Media keys are the only HID input that survives the lock screen on
+  // both platforms, but they only route while a playback session is
+  // active — hence the quiet tone. Volume is deliberately not listed:
+  // no app can intercept it on either OS.
+  const MEDIA_ACTIONS = [
+    "play", "pause", "stop", "nexttrack", "previoustrack",
+    "seekbackward", "seekforward", "seekto", "skipad",
+    "previousslide", "nextslide", "togglemicrophone", "togglecamera", "hangup",
+  ];
+  let audio = null;
+  const mediaState = $("media-state");
+
+  function quietToneUrl(seconds = 60, hz = 220, amp = 0.02, rate = 8000) {
+    const n = seconds * rate;
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVEfmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data");
+    v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) {
+      const s = Math.sin((2 * Math.PI * hz * i) / rate) * amp * 32767;
+      v.setInt16(44 + i * 2, s, true);
+    }
+    return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  }
+
+  $("mediaStart").addEventListener("click", async () => {
+    if (!("mediaSession" in navigator)) {
+      mediaState.textContent = "navigator.mediaSession unavailable";
+      log("MEDIA: navigator.mediaSession unavailable");
+      return;
+    }
+    audio = new Audio(quietToneUrl());
+    audio.loop = true;
+    audio.volume = 0.05;
+    try { await audio.play(); } catch (err) { log("MEDIA: audio.play failed " + err); }
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: "voir remote probe", artist: "probe", album: "probe",
+    });
+    for (const action of MEDIA_ACTIONS) {
+      try {
+        navigator.mediaSession.setActionHandler(action, (details) => {
+          log("MEDIA action=" + action + (details && details.seekTime != null ? " seekTime=" + details.seekTime : ""));
+          if (action === "play") { audio?.play().catch(() => {}); }
+          if (action === "pause" || action === "stop") { audio?.pause(); }
+        });
+        log("MEDIA handler registered: " + action);
+      } catch {
+        log("MEDIA handler unsupported: " + action);
+      }
+    }
+    mediaState.className = "ok";
+    mediaState.textContent = "session active — press the ring's keys now";
+  });
+
+  $("mediaStop").addEventListener("click", () => {
+    if (audio) { audio.pause(); audio.src = ""; audio = null; }
+    if ("mediaSession" in navigator) {
+      for (const action of MEDIA_ACTIONS) {
+        try { navigator.mediaSession.setActionHandler(action, null); } catch {}
+      }
+      navigator.mediaSession.metadata = null;
+    }
+    mediaState.className = "muted";
+    mediaState.textContent = "idle";
+    log("MEDIA stopped");
+  });
+
+  // ------------------------------------------------------- 4 · Web Bluetooth
+  const BLE_SERVICES = [
+    "battery_service", "device_information", "human_interface_device",
+    "generic_access", "generic_attribute", "scan_parameters",
+    "immediate_alert", "link_loss", "tx_power", "current_time",
+    "heart_rate", "health_thermometer", "glucose", "blood_pressure",
+    "cycling_speed_and_cadence", "running_speed_and_cadence",
+    "fitness_machine", "user_data", "weight_scale", "pulse_oximeter",
+    "environmental_sensing", "automation_io", "object_transfer",
+  ];
+
+  async function bleExplore(device) {
+    log("BLE device name=" + JSON.stringify(device.name) + " id=" + device.id);
+    const server = await device.gatt.connect();
+    log("BLE connected");
+    const services = await server.getPrimaryServices();
+    for (const svc of services) {
+      let chars = [];
+      try { chars = await svc.getCharacteristics(); } catch (err) { log("BLE chars failed " + svc.uuid + ": " + err); }
+      log("BLE service " + svc.uuid + " → " + chars.length + " char(s)");
+      for (const ch of chars) {
+        const props = Object.entries(ch.properties).filter(([, v]) => v).map(([k]) => k).join(",");
+        log("BLE    char " + ch.uuid + " [" + props + "]");
+        if (ch.properties.notify || ch.properties.indicate) {
+          try {
+            await ch.startNotifications();
+            ch.addEventListener("characteristicvaluechanged", (ev) => {
+              const dv = ev.target.value;
+              log("BLE    notify " + ch.uuid + " = " + hex(dv.buffer) + "  |" + ascii(dv.buffer) + "|");
+            });
+            log("BLE    subscribed " + ch.uuid);
+          } catch (err) { log("BLE    subscribe failed " + ch.uuid + ": " + err); }
+        }
+      }
+    }
+    device.addEventListener("gattserverdisconnected", () => log("BLE disconnected"));
+  }
+
+  let bleDevice = null;
+  $("bleScan").addEventListener("click", async () => {
+    if (!navigator.bluetooth) {
+      log("BLE: navigator.bluetooth unavailable (needs Android Chrome + secure context)");
+      return;
+    }
+    try {
+      bleDevice = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: BLE_SERVICES,
+      });
+      await bleExplore(bleDevice);
+    } catch (err) {
+      log("BLE failed: " + (err && err.name ? err.name + " " : "") + (err && err.message ? err.message : err));
+    }
+  });
+  $("bleDisc").addEventListener("click", () => {
+    if (bleDevice && bleDevice.gatt.connected) { bleDevice.gatt.disconnect(); log("BLE disconnect requested"); }
+  });
+
+  // ----------------------------------------------------------- 5 · gamepads
+  const padsEl = $("pads");
+  const padState = new Map();
+  function pollPads() {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const names = [];
+    for (const pad of pads) {
+      if (!pad) continue;
+      names.push(pad.index + ": " + pad.id);
+      const pressed = pad.buttons.map((b, i) => (b.pressed ? i : -1)).filter((i) => i >= 0);
+      const sig = pressed.join(",") + "|" + pad.axes.map((a) => a.toFixed(1)).join(",");
+      if (padState.get(pad.index) !== sig) {
+        padState.set(pad.index, sig);
+        if (pressed.length || pad.axes.some((a) => Math.abs(a) > 0.2)) {
+          log("PAD " + pad.index + " buttons=[" + pressed + "] axes=[" + pad.axes.map((a) => a.toFixed(2)) + "]");
+        }
+      }
+    }
+    padsEl.className = names.length ? "" : "muted";
+    padsEl.textContent = names.length ? names.join(" · ") : "no gamepads";
+    requestAnimationFrame(pollPads);
+  }
+  window.addEventListener("gamepadconnected", (e) => log("PAD connected " + e.gamepad.id));
+  window.addEventListener("gamepaddisconnected", (e) => log("PAD disconnected " + e.gamepad.id));
+  requestAnimationFrame(pollPads);
+
+  // ------------------------------------------------------------------ log
+  $("copyLog").addEventListener("click", async () => {
+    const text = lines.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      $("copyLog").textContent = "copied";
+      setTimeout(() => { $("copyLog").textContent = "copy log"; }, 1500);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); } catch {}
+      ta.remove();
+    }
+  });
+  $("clearLog").addEventListener("click", () => { lines.length = 0; logEl.textContent = ""; });
+
+  log("probe ready — " + navigator.userAgent);
+  log("secureContext=" + window.isSecureContext + " bluetooth=" + !!navigator.bluetooth + " mediaSession=" + ("mediaSession" in navigator));
+})();
+</script>
+</body>
+</html>

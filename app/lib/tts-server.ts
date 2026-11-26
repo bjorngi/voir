@@ -9,10 +9,22 @@ import { WebSocket, WebSocketServer } from "ws";
  *   { "type": "speak", "text": "…" }   — synthesize + stream audio
  *   { "type": "cancel" }               — drop the current synthesis
  *
- * and receives binary frames (PCM16 little-endian, 24kHz, mono —
- * same shape the STT side sends upstream) plus a JSON control
- * frame { "type": "end" } when a synthesis completes. The API key
- * lives in the server env; the browser never sees it.
+ * and receives binary frames plus a JSON control frame
+ * { "type": "end" } when a synthesis completes. Two encodings:
+ *
+ *   linear16 (default)  raw PCM16 LE, 24kHz, mono — the shape the
+ *                       STT side sends upstream, for Web Audio
+ *                       scheduling on the client.
+ *   mp3                 containerized, so the client can wrap one
+ *                       sentence in a Blob and hand it to an
+ *                       <audio> element. That is what keeps
+ *                       narration playing under a locked screen
+ *                       (an AudioContext is suspended when the
+ *                       page backgrounds; a media element is not).
+ *                       Concatenated MP3 frames are a valid stream,
+ *                       so no container work is needed server-side.
+ *
+ * The API key lives in the server env; the browser never sees it.
  *
  * Provider (VOICE_TTS_PROVIDER): "deepgram" — Aura-2 via their
  * /v1/speak WebSocket (Speak + Flush, audio relays back; we close
@@ -156,9 +168,19 @@ export function attachTtsServer(
         } catch {
           return;
         }
-        const m = msg as { type?: string; text?: string; voice?: string; speed?: number };
+        const m = msg as {
+          type?: string;
+          text?: string;
+          voice?: string;
+          speed?: number;
+          encoding?: string;
+        };
         if (m?.type === "speak" && typeof m.text === "string" && m.text) {
           const voice = validVoice(m.voice, cfg.model);
+          // Whitelisted transport format: mp3 is what a media element
+          // can play (lock-screen narration); anything unrecognised
+          // falls back to the raw PCM the Web Audio path expects.
+          const encoding = m.encoding === "mp3" ? "mp3" : "linear16";
           // Speaking-rate multiplier (0.7–1.5 per the API); clamped
           // server-side, ignored when absent.
           const speed =
@@ -168,7 +190,7 @@ export function attachTtsServer(
           speaks += 1;
           dropUpstream(); // one synthesis at a time (client queues)
           const u = new WebSocket(
-            `wss://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=linear16&sample_rate=24000${speed}`,
+            `wss://api.deepgram.com/v1/speak?model=${encodeURIComponent(voice)}&encoding=${encoding}&sample_rate=24000${speed}`,
             { headers: { Authorization: `Token ${ttsKey()}` } },
           );
           upstream = u;

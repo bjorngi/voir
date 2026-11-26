@@ -16,6 +16,27 @@ import { withSpan } from "~/lib/otel.server";
  * the app uses (stale-while-revalidate), so opening the menu does not scan
  * the agents' session stores again.
  */
+/**
+ * Per-folder deadline for the session list.
+ *
+ * A cold `session/list` is an RPC to the agent; a wedged or restarting agent
+ * answers only after its own 10s timeout — and this route asks every folder.
+ * Measured in production: 64 seconds for the whole menu, which made the ☰
+ * button look broken. The menu is navigation, not truth: answer with the
+ * folders immediately, with whatever session lists are already cached, and
+ * let the background refresh fill them in for the next open.
+ */
+const NAV_DEADLINE_MS = 1_200;
+
+function withDeadline<T>(work: Promise<T>, fallback: T): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<T>((resolve) =>
+      setTimeout(() => resolve(fallback), NAV_DEADLINE_MS),
+    ),
+  ]);
+}
+
 export async function loader() {
   const started = Date.now();
   const folders = sessionManager.listFolders();
@@ -31,7 +52,12 @@ export async function loader() {
         busy: boolean;
       }[] = [];
       try {
-        const list = await sessionManager.listSessions(path);
+        // Cache-only: never block on an agent. `listSessions` (which waits)
+        // is what the chat pages use; the menu must answer instantly.
+        const list = await withDeadline(
+          Promise.resolve(sessionManager.cachedSessionsFor(path)),
+          [] as Awaited<ReturnType<typeof sessionManager.cachedSessionsFor>>,
+        );
         sessions = list
           .slice(0, 40)
           .map((s) => ({

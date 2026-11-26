@@ -6,28 +6,40 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * - **neural** (default when the server has a TTS key, see
  *   GET /api/tts): sentences are sent to the server-proxied
  *   /api/tts WebSocket and synthesized by a streaming neural voice
- *   (Deepgram Aura). Binary PCM16@24kHz chunks come back and are
- *   scheduled gaplessly on a Web Audio graph — narration tracks
- *   the text, sentence by sentence, as it streams in.
+ *   (Deepgram Aura). Audio comes back as one MP3 blob per sentence
+ *   and is played through a single <audio> element, sentence after
+ *   sentence, while the *next* sentence synthesizes in the
+ *   background.
  * - **browser**: window.speechSynthesis, the always-available
  *   fallback — noticeably synthetic, but zero setup.
+ *
+ * Why a media element and not Web Audio: narration is the thing you
+ * listen to with the screen off. An AudioContext is suspended the
+ * moment the page is backgrounded or the screen locks (iOS suspends
+ * it outright; Chrome throttles it), and Chrome shows no media
+ * notification for Web Audio output at all — so no lock-screen
+ * controls, no headphone play/pause, no media-key routing. A media
+ * element keeps playing under a locked screen on both platforms and
+ * is what puts Voir on the lock screen as the current audio session.
+ *
+ * The cost is that a sentence is heard after it is synthesized
+ * rather than trickling in; narration.ts hands us sentence-sized
+ * chunks, Aura synthesizes far faster than realtime, and the next
+ * sentence is already in flight while the current one speaks, so
+ * the seam between sentences is a decode start, not a round trip.
  *
  * The enabled state persists in localStorage (this is a phone
  * tool; nobody re-enables narration on every visit). speak() is
  * what the chat narration calls; force lets voice-conversation
  * mode narrate regardless of the global toggle.
  *
- * Mobile note: playback needs an AudioContext, which starts
- * suspended without a user gesture — `preparePlayback()` must be
- * called from one (voice-mode start, toggle tap, panel tap).
+ * Mobile note: playback needs one user gesture. `preparePlayback()`
+ * must be called from one (voice-mode start, toggle tap, panel tap)
+ * so the element is unlocked before the first sentence arrives from
+ * the network — a play() from a socket message is blocked otherwise.
  */
 
 const STORAGE_KEY = "voir:tts";
-
-// Neural playback: incoming PCM16 chunks are tiny (Deepgram
-// streams continuously); batch them to ~200ms before scheduling
-// so we don't spin up a source node every frame.
-const NEURAL_BATCH_SAMPLES = 4800;
 
 // After the neural→browser fallback, how long to stay on browser
 // voices before trying neural again (the next speak, or a return
@@ -36,6 +48,40 @@ const NEURAL_BATCH_SAMPLES = 4800;
 // the whole page session; a still-broken server just re-trips
 // the 3-strike and degrades again after another cooldown.
 const NEURAL_RETRY_MS = 2 * 60_000;
+
+// Lock-screen identity. The media session is what turns narration
+// into a first-class audio session (notification, headphone
+// buttons, the lockscreen transport on iOS and Android).
+const MEDIA_TITLE = "Voir";
+const MEDIA_ARTIST = "narration";
+
+/** 20ms of silence as a WAV object URL — played inside a gesture to
+ *  unlock the element, never heard. Created once per page. */
+let silentUrl: string | null = null;
+function silentWavUrl(): string {
+  if (silentUrl) return silentUrl;
+  const rate = 8000;
+  const samples = Math.round(rate * 0.02);
+  const buf = new ArrayBuffer(44 + samples * 2);
+  const v = new DataView(buf);
+  const str = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i));
+  };
+  str(0, "RIFF");
+  v.setUint32(4, 36 + samples * 2, true);
+  str(8, "WAVEfmt ");
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  str(36, "data");
+  v.setUint32(40, samples * 2, true);
+  silentUrl = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  return silentUrl;
+}
 
 export interface Tts {
   /** Any engine available (neural or browser). */
@@ -56,7 +102,8 @@ export interface Tts {
   cancel: () => void;
   /** Whether audio is queued, in flight, or scheduled to play. */
   speaking: () => boolean;
-  /** Create/resume the playback AudioContext — must be called from\n   *  a user gesture on mobile (AudioContexts start suspended). */
+  /** Unlock the playback element — must be called from a user
+   *  gesture on mobile (programmatic play() is blocked until then). */
   preparePlayback: () => void;
 }
 
@@ -107,17 +154,22 @@ export function useSpeechSynthesis(): Tts {
   neuralRef.current = neuralTts;
 
   // ------------------------------------------------------------------
-  // Neural engine state. Sentences are serialized: one speak
-  // request in flight, the rest in queueRef; audio chunks
-  // accumulate in sampleRef and flush as scheduled buffers.
+  // Neural engine state. Two queues and one element:
+  //
+  //   textQueueRef — sentences awaiting synthesis
+  //   playQueueRef — synthesized blobs awaiting playback
+  //   chunksRef    — MP3 bytes of the sentence currently synthesizing
+  //
+  // Synthesis runs one sentence ahead of playback, so the element has
+  // its next source ready before the current one ends.
   // ------------------------------------------------------------------
   const wsRef = useRef<WebSocket | null>(null);
-  const actxRef = useRef<AudioContext | null>(null);
-  const queueRef = useRef<Array<{ text: string; voice?: string; speed?: number }>>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const textQueueRef = useRef<Array<{ text: string; voice?: string; speed?: number }>>([]);
+  const playQueueRef = useRef<string[]>([]);
+  const chunksRef = useRef<BlobPart[]>([]);
   const inFlightRef = useRef(false);
-  const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
-  const nextStartRef = useRef(0);
-  const sampleRef = useRef<number[]>([]);
+  const playingRef = useRef(false);
   // Consecutive neural-socket failures — after a few, fall back
   // to the browser voices until the retry cooldown passes (see
   // NEURAL_RETRY_MS / retryNeural). Without this a dead endpoint
@@ -130,29 +182,132 @@ export function useSpeechSynthesis(): Tts {
   // When the fallback last tripped — the self-heal cooldown clock.
   const degradedAtRef = useRef(0);
 
-  const cancel = useCallback(() => {
-    if (neuralRef.current) {
-      queueRef.current = [];
-      inFlightRef.current = false;
-      sampleRef.current = [];
-      nextStartRef.current = 0;
-      for (const s of sourcesRef.current) {
-        try {
-          s.stop();
-        } catch {}
-      }
-      sourcesRef.current.clear();
-      const ws = wsRef.current;
-      wsRef.current = null;
-      if (ws && ws.readyState <= WebSocket.OPEN) {
-        ws.onclose = null;
-        try {
-          ws.close();
-        } catch {}
-      }
-    }
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  // playNext / pump are mutually recursive with the socket and
+  // element callbacks, so both are held in refs and assigned below.
+  const playNextRef = useRef<() => void>(() => {});
+  const pumpRef = useRef<() => void>(() => {});
+
+  const releaseUrl = (url: string) => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {}
+  };
+
+  /** Lock-screen / media-key identity: present it while audio is
+   *  live, clear it when narration ends so a stale widget doesn't
+   *  sit on the lock screen. */
+  const setLockScreen = useCallback((on: boolean) => {
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.metadata = on
+        ? new MediaMetadata({ title: MEDIA_TITLE, artist: MEDIA_ARTIST, album: MEDIA_TITLE })
+        : null;
+      navigator.mediaSession.playbackState = on ? "playing" : "none";
+    } catch {}
   }, []);
+
+  /** Play the next synthesized sentence, if the element is free. */
+  playNextRef.current = () => {
+    const el = audioRef.current;
+    if (!el || playingRef.current) return;
+    const url = playQueueRef.current.shift();
+    if (url === undefined) {
+      // Drained. Only clear the media session when nothing is left
+      // to synthesize either (the pump refills this queue).
+      if (!inFlightRef.current && textQueueRef.current.length === 0) {
+        setLockScreen(false);
+      }
+      return;
+    }
+    playingRef.current = true;
+    setLockScreen(true);
+    el.src = url;
+    const started = el.play();
+    if (started && typeof started.catch === "function") {
+      started.catch(() => {
+        // Blocked (no gesture yet) or an undecodable blob: drop it
+        // and keep the chain moving rather than going silent.
+        playingRef.current = false;
+        releaseUrl(url);
+        playNextRef.current();
+      });
+    }
+  };
+
+  const ensureAudio = useCallback((): HTMLAudioElement | null => {
+    if (typeof Audio === "undefined") return null;
+    const existing = audioRef.current;
+    if (existing) return existing;
+    const el = new Audio();
+    el.preload = "auto";
+    el.setAttribute("playsinline", "");
+    el.addEventListener("ended", () => {
+      const src = el.getAttribute("src");
+      playingRef.current = false;
+      if (src) {
+        el.removeAttribute("src");
+        releaseUrl(src);
+      }
+      playNextRef.current();
+    });
+    el.addEventListener("error", () => {
+      const src = el.getAttribute("src");
+      playingRef.current = false;
+      if (src) {
+        el.removeAttribute("src");
+        releaseUrl(src);
+      }
+      playNextRef.current();
+    });
+    if ("mediaSession" in navigator) {
+      try {
+        // Transport controls in the notification / on the lock
+        // screen. next/prev are deliberately left unclaimed: the
+        // walking surface assigns those to session slots.
+        navigator.mediaSession.setActionHandler("play", () => {
+          void el.play().catch(() => {});
+        });
+        navigator.mediaSession.setActionHandler("pause", () => el.pause());
+        navigator.mediaSession.setActionHandler("stop", () => {
+          el.pause();
+          playQueueRef.current.forEach(releaseUrl);
+          playQueueRef.current = [];
+          textQueueRef.current = [];
+          setLockScreen(false);
+        });
+      } catch {}
+    }
+    audioRef.current = el;
+    return el;
+  }, [setLockScreen]);
+
+  const cancel = useCallback(() => {
+    textQueueRef.current = [];
+    playQueueRef.current.forEach(releaseUrl);
+    playQueueRef.current = [];
+    chunksRef.current = [];
+    inFlightRef.current = false;
+    playingRef.current = false;
+    const el = audioRef.current;
+    if (el) {
+      const src = el.getAttribute("src");
+      try {
+        el.pause();
+      } catch {}
+      el.removeAttribute("src");
+      if (src) releaseUrl(src);
+    }
+    const ws = wsRef.current;
+    wsRef.current = null;
+    if (ws && ws.readyState <= WebSocket.OPEN) {
+      ws.onclose = null;
+      try {
+        ws.close();
+      } catch {}
+    }
+    setLockScreen(false);
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  }, [setLockScreen]);
 
   const setEnabled = useCallback(
     (v: boolean) => {
@@ -165,22 +320,23 @@ export function useSpeechSynthesis(): Tts {
     [cancel],
   );
 
-  /** Schedule accumulated samples as one gapless AudioBuffer. */
-  const flushSamples = useCallback(() => {
-    const actx = actxRef.current;
-    const samples = sampleRef.current;
-    if (!actx || samples.length === 0) return;
-    const buffer = actx.createBuffer(1, samples.length, 24000);
-    buffer.copyToChannel(new Float32Array(samples), 0);
-    sampleRef.current = [];
-    const src = actx.createBufferSource();
-    src.buffer = buffer;
-    src.connect(actx.destination);
-    const t = Math.max(actx.currentTime + 0.02, nextStartRef.current);
-    src.start(t);
-    nextStartRef.current = t + buffer.duration;
-    sourcesRef.current.add(src);
-    src.onended = () => sourcesRef.current.delete(src);
+  /** The socket said "end": this sentence's audio is complete. Queue
+   *  the blob, kick playback, and immediately start the next
+   *  sentence — synthesis stays one sentence ahead of the voice. */
+  const finishSentence = useCallback(() => {
+    const parts = chunksRef.current;
+    chunksRef.current = [];
+    inFlightRef.current = false;
+    if (parts.length > 0) {
+      const blob = new Blob(parts, { type: "audio/mpeg" });
+      // A handful of bytes is a truncated frame or an empty
+      // synthesis — playing it would be a click, not a word.
+      if (blob.size > 512) {
+        playQueueRef.current.push(URL.createObjectURL(blob));
+        playNextRef.current();
+      }
+    }
+    pumpRef.current();
   }, []);
 
   const ensureSocket = useCallback((): WebSocket | null => {
@@ -192,28 +348,29 @@ export function useSpeechSynthesis(): Tts {
     wsRef.current = ws;
     ws.onmessage = (e) => {
       if (typeof e.data !== "string") {
-        // PCM16 LE mono 24kHz → Float32 samples.
-        const pcm = new Int16Array(e.data as ArrayBuffer);
-        const out = sampleRef.current;
-        for (let i = 0; i < pcm.length; i++) out.push(pcm[i] / 32768);
-        if (out.length >= NEURAL_BATCH_SAMPLES) flushSamples();
+        chunksRef.current.push(e.data as ArrayBuffer);
         return;
       }
+      let msg: { type?: string };
       try {
-        const msg = JSON.parse(e.data) as { type?: string };
-        if (msg.type === "end" || msg.type === "error") {
-          flushSamples();
-          inFlightRef.current = false;
-          pumpRef.current();
-        }
-      } catch {}
+        msg = JSON.parse(e.data) as { type?: string };
+      } catch {
+        return;
+      }
+      if (msg.type === "end") {
+        finishSentence();
+      } else if (msg.type === "error") {
+        chunksRef.current = [];
+        inFlightRef.current = false;
+        pumpRef.current();
+      }
     };
     ws.onopen = () => {
       failCountRef.current = 0;
     };
     ws.onclose = () => {
       if (wsRef.current === ws) wsRef.current = null;
-      flushSamples();
+      chunksRef.current = [];
       inFlightRef.current = false;
       // Fall back to browser voices after repeated connection
       // failures — drain the queue through speechSynthesis so the
@@ -223,8 +380,8 @@ export function useSpeechSynthesis(): Tts {
         setNeuralTts(false);
         neuralRef.current = false;
         degradedAtRef.current = Date.now();
-        const pending = queueRef.current;
-        queueRef.current = [];
+        const pending = textQueueRef.current;
+        textQueueRef.current = [];
         if ("speechSynthesis" in window) {
           for (const { text } of pending) {
             const u = new SpeechSynthesisUtterance(text);
@@ -237,26 +394,21 @@ export function useSpeechSynthesis(): Tts {
       pumpRef.current();
     };
     return ws;
-  }, [flushSamples]);
+  }, [finishSentence]);
 
-  const pumpRef = useRef<() => void>(() => {});
+  const speakNeural = useCallback((text: string, voice?: string, speed?: number) => {
+    textQueueRef.current.push({ text, voice, speed });
+    pumpRef.current();
+  }, []);
 
-  const speakNeural = useCallback(
-    (text: string, voice?: string, speed?: number) => {
-      queueRef.current.push({ text, voice, speed });
-      pumpRef.current();
-    },
-    [],
-  );
-
-  // One sentence at a time: when a synthesis ends ("end"/close),
-  // send the next. The in-flight sentence is shifted from the
-  // queue here, not at enqueue time.
+  // One sentence at a time: send the next when the previous one has
+  // been synthesized, not when it has been spoken (see finishSentence).
   pumpRef.current = () => {
-    if (inFlightRef.current || queueRef.current.length === 0) return;
-    const next = queueRef.current.shift();
+    if (inFlightRef.current || textQueueRef.current.length === 0) return;
+    const next = textQueueRef.current.shift();
     if (next === undefined) return;
     inFlightRef.current = true;
+    chunksRef.current = [];
     const ws = ensureSocket();
     if (!ws) {
       inFlightRef.current = false;
@@ -267,6 +419,9 @@ export function useSpeechSynthesis(): Tts {
         JSON.stringify({
           type: "speak",
           text: next.text,
+          // Lock-screen playback needs a container the element can
+          // decode; the server passes this through to the provider.
+          encoding: "mp3",
           ...(next.voice ? { voice: next.voice } : {}),
           ...(next.speed ? { speed: next.speed } : {}),
         }),
@@ -276,20 +431,24 @@ export function useSpeechSynthesis(): Tts {
   };
 
   const preparePlayback = useCallback(() => {
-    if (!actxRef.current) {
+    const el = ensureAudio();
+    if (el && !playingRef.current && playQueueRef.current.length === 0) {
+      // Unlock: both mobile platforms refuse a programmatic play()
+      // until the element has played once inside a gesture. Twenty
+      // milliseconds of silence is inaudible and enough.
       try {
-        actxRef.current = new AudioContext();
+        el.src = silentWavUrl();
+        const started = el.play();
+        if (started && typeof started.then === "function") {
+          started.then(() => el.pause()).catch(() => {});
+        }
       } catch {}
-    }
-    const ctx = actxRef.current;
-    if (ctx && ctx.state === "suspended") {
-      void ctx.resume().catch(() => {});
     }
     if ("speechSynthesis" in window) {
       // Warm the browser voices (iOS populates them lazily).
       void window.speechSynthesis.getVoices();
     }
-  }, []);
+  }, [ensureAudio]);
 
   /** Self-heal: flip back to the neural engine once the cooldown
    *  has passed. Called from speak() and on foreground return —
@@ -340,18 +499,16 @@ export function useSpeechSynthesis(): Tts {
 
   const speaking = useCallback(() => {
     if (neuralRef.current) {
-      const actx = actxRef.current;
+      const el = audioRef.current;
       return (
-        queueRef.current.length > 0 ||
+        textQueueRef.current.length > 0 ||
+        playQueueRef.current.length > 0 ||
         inFlightRef.current ||
-        (actx !== null && nextStartRef.current > actx.currentTime) ||
-        sampleRef.current.length > 0
+        (el !== null && !el.paused && !el.ended)
       );
     }
     if ("speechSynthesis" in window) {
-      return (
-        window.speechSynthesis.speaking || window.speechSynthesis.pending
-      );
+      return window.speechSynthesis.speaking || window.speechSynthesis.pending;
     }
     return false;
   }, []);

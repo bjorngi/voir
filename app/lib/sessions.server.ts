@@ -766,6 +766,45 @@ class SessionManager {
     return answer;
   }
 
+  /**
+   * Session lists for a path built ONLY from the per-agent TTL cache — no
+   * agent RPC, no waiting.
+   *
+   * The phone menu needs an answer in milliseconds even when an agent is
+   * restarting or its session store is slow to scan (measured: a cold
+   * `session/list` across ten folders took 64 seconds). A missing cache
+   * entry simply yields fewer rows; the refresh is kicked in the background
+   * so the next open has them. Anything that must be *right* (the chat
+   * itself) keeps using listSessions, which does wait.
+   */
+  cachedSessionsFor(folder: string): SessionState[] {
+    const path = normalizeFolder(folder);
+    const out: SessionState[] = [];
+    for (const state of this.agentsUnder(path)) {
+      const key = agentKey(state.path, state.agentName);
+      const hit = this.listCache.get(key);
+      if (!hit) {
+        this.refreshList(state, key).catch(() => {});
+        continue;
+      }
+      for (const entry of hit.list) {
+        if (!entry.sessionId) continue;
+        if (entry.cwd && entry.cwd !== state.path) continue;
+        out.push(
+          state.sessions.get(entry.sessionId) ?? {
+            id: entry.sessionId,
+            title: entry.title,
+            createdAt: Date.parse(entry.updatedAt ?? "") || Date.now(),
+            messages: [],
+            busy: false,
+            stub: true,
+          },
+        );
+      }
+    }
+    return out;
+  }
+
   getSession(folder: string, sessionId: string): SessionState | undefined {
     return this.sessionAgent(folder, sessionId)?.sessions.get(sessionId);
   }

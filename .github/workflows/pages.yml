@@ -40,5 +40,24 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+      # deploy-pages resolves the artifact as soon as it starts and has been
+      # seen racing the upload ("Found 0 artifact(s)" seconds after a
+      # successful 2.2 MB upload — twice in ten minutes, green on rerun).
+      # Poll the artifacts API until the upload is visible, so the deploy
+      # step cannot start before it.
+      - name: Wait for the gallery artifact to be visible
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 20); do
+            n=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts"                   --jq '.artifacts | map(select(.name == "github-pages")) | length')
+            if [ "$n" -gt 0 ]; then
+              echo "artifact visible after ${i} checks"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "artifact never became visible" >&2
+          exit 1
       - id: deployment
         uses: actions/deploy-pages@v4
